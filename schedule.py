@@ -1,17 +1,20 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import List
+from typing import List, Tuple, Dict
 from batches import *
-from policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy
+from policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy
 
 
 class PipelineSimulator(object):
     def __init__(self, num_stages: int, num_batches: int, policy: PipelinePolicy,
-                 slow_stages: List[int], split_backward: bool = False) -> None:
+                 slow_stages: List[int], comm_delay: Dict[Tuple[int, int], int],
+                 split_backward: bool = False) -> None:
+        '''comm_delay: (i, j) -> T. delays T seconds between stage i and j'''
         self.num_stages = num_stages
         self.num_batches = num_batches
         self.split_backward = split_backward
         self.slow_stages = slow_stages
+        self.comm_delay = comm_delay
         self.task_queues = [[] for _ in range(self.num_stages)]
         self.history_queues = [[] for _ in range(self.num_stages)]
         self.next_avail_times = np.zeros(self.num_stages, dtype=np.float32)
@@ -24,7 +27,8 @@ class PipelineSimulator(object):
         if isinstance(batch, ForwardBatch):
             if i != self.num_stages - 1:
                 fail_slow = True if i + 1 in self.slow_stages else False
-                self.task_queues[i + 1].append(ForwardBatch(batch.batch_idx, fail_slow, time + 1))
+                delay = self.comm_delay.get((i, i + 1), 0) + 1
+                self.task_queues[i + 1].append(ForwardBatch(batch.batch_idx, fail_slow, time + delay))
             else:
                 fail_slow = True if i in self.slow_stages else False
                 if self.split_backward:
@@ -35,18 +39,20 @@ class PipelineSimulator(object):
         elif isinstance(batch, BackwardBatch):
             if i != 0:
                 fail_slow = True if i - 1 in self.slow_stages else False
-                self.task_queues[i - 1].append(BackwardBatch(batch.batch_idx, fail_slow, time + 1))
+                delay = self.comm_delay.get((i - 1, i), 0) + 1
+                self.task_queues[i - 1].append(BackwardBatch(batch.batch_idx, fail_slow, time + delay))
         elif isinstance(batch, BackwardInputBatch):
             fail_slow = True if i - 1 in self.slow_stages else False
+            delay = self.comm_delay.get((i - 1, i), 0) + 1
             if i != 0:
-                self.task_queues[i - 1].append(BackwardInputBatch(batch.batch_idx, fail_slow, time + 1))
-                self.task_queues[i - 1].append(BackwardWeightBatch(batch.batch_idx, fail_slow, time + 1))
+                self.task_queues[i - 1].append(BackwardInputBatch(batch.batch_idx, fail_slow, time + delay))
+                self.task_queues[i - 1].append(BackwardWeightBatch(batch.batch_idx, fail_slow, time + delay))
         elif isinstance(batch, BackwardWeightBatch) or isinstance(batch, BubbleBatch):
             pass
         else:
             raise RuntimeError(f"Unrecognized batch {batch}!")
 
-    def simulate(self) -> None:
+    def simulate(self) -> int:
         time = 0
         while True:
             num_empty_queues = 0
@@ -89,6 +95,7 @@ class PipelineSimulator(object):
             if num_empty_queues == self.num_stages:
                 break
             time += 1
+        return time
 
     def plot(self) -> None:
         plt.figure(figsize=(10, 3))
@@ -109,9 +116,11 @@ class PipelineSimulator(object):
 
 
 def main() -> None:
-    num_stages, num_batches = 4, 10
+    num_stages, num_batches = 4, 8
     policy = PipeDreamPolicy(num_stages)
-    simulator = PipelineSimulator(num_stages, num_batches, policy, [1, 2, 3, 0], False)
+    # policy = LearnedPolicy(num_stages, num_batches)
+    policy = GpipePolicy()
+    simulator = PipelineSimulator(num_stages, num_batches, policy, [], {(2, 3): 10}, True)
     simulator.simulate()
     simulator.plot()
     plt.show()
