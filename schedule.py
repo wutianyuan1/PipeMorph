@@ -1,7 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 from typing import List, Tuple, Dict
-from batches import *
+from batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
+from batches import FORWARD_TIME, BACKWARD_TIME, SLOW_FACTOR
 from policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy
 
 
@@ -22,7 +24,7 @@ class PipelineSimulator(object):
         for i in range(self.num_batches):
             fail_slow = True if (0 in self.slow_stages) else False
             self.task_queues[0].append(ForwardBatch(i, fail_slow, -1))
-    
+
     def add_dependency(self, time: int, i: int, batch: Batch) -> None:
         if isinstance(batch, ForwardBatch):
             if i != self.num_stages - 1:
@@ -109,7 +111,7 @@ class PipelineSimulator(object):
         normal_stage_total = (BACKWARD_TIME + FORWARD_TIME) * self.num_batches * (self.num_stages - len(self.slow_stages))
         slow_stage_total = (BACKWARD_TIME + FORWARD_TIME) * SLOW_FACTOR * self.num_batches * len(self.slow_stages)
         usage = (normal_stage_total + slow_stage_total) / (maxt * self.num_stages)
-        rect = patches.Rectangle((0, 0), maxt, self.num_stages, linewidth=1, edgecolor='black',facecolor='#F2F2F2', zorder=0)
+        rect = patches.Rectangle((0, 0), maxt, self.num_stages, linewidth=1, edgecolor='black', facecolor='#F2F2F2', zorder=0)
         ax.add_patch(rect)
         ax.set_title(f"S={self.num_stages}, B={self.num_batches}, Total Time = {maxt}, Bubble Rate = {(1 - usage) * 100:.2f}%")
         ax.set_xlim(0, maxt)
@@ -119,10 +121,11 @@ class PipelineSimulator(object):
 
 def main() -> None:
     num_stages, num_batches = 4, 8
-    # policy = PipeDreamPolicy(num_stages)
-    # policy = LearnedPolicy(num_stages, num_batches)
+    # Please comment out the unused policies
+    policy = PipeDreamPolicy(num_stages)
+    policy = LearnedPolicy(num_stages, num_batches)
     policy = GpipePolicy()
-    # policy = ZeroBubblePolicy(num_stages)
+    policy = ZeroBubblePolicy(num_stages)
     simulator = PipelineSimulator(num_stages, num_batches, policy, [], {(2, 3): 10}, True)
     simulator.simulate()
     simulator.plot()

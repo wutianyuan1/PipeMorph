@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from typing import List
-from batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
+from batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch
 
 
 class PipelinePolicy(ABC):
@@ -13,6 +13,7 @@ class PipelinePolicy(ABC):
     @abstractmethod
     def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None) -> int:
         pass
+
 
 # Gpipe: forward has higher priority than backward
 class GpipePolicy(PipelinePolicy):
@@ -59,6 +60,7 @@ class PipeDreamPolicy(PipelinePolicy):
             return None
         return minidx
 
+
 # ZeroBubble (ICLR'24)
 class ZeroBubblePolicy(PipelinePolicy):
     def __init__(self, num_stages: int) -> None:
@@ -80,15 +82,16 @@ class ZeroBubblePolicy(PipelinePolicy):
             return None
         return minidx
 
+
 class MockAgentNet(nn.Module):
-    def __init__(self, B=10, embedding_dim=4):
+    def __init__(self, B: int = 10, embedding_dim: int = 4) -> None:
         super(MockAgentNet, self).__init__()
         self.embedding = nn.Embedding(3, embedding_dim, padding_idx=2)  # "F"=0, "B"=1, "PAD"=2
         self.fc1 = nn.Linear(4 * B * embedding_dim, 64)
         self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 2)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.embedding(x)
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
@@ -96,16 +99,19 @@ class MockAgentNet(nn.Module):
         x = self.fc3(x)
         return F.softmax(x, dim=1)
 
-def encode_queue(queue, max_length):
+
+def encode_queue(queue: List, max_length: int) -> List[int]:
     mapping = {ForwardBatch: 0, BackwardBatch: 1}
     encoded = [mapping.get(type(x), 2) for x in queue]  # Use 2 for padding
     encoded += [2] * (max_length - len(encoded))
     return encoded
 
-def prepare_input(task_queue, finish_queue, max_length):
+
+def prepare_input(task_queue: List, finish_queue: List, max_length: int) -> torch.Tensor:
     task_encoded = encode_queue(task_queue, max_length)
     finish_encoded = encode_queue(finish_queue, max_length)
     return torch.tensor(task_encoded + finish_encoded, dtype=torch.long)
+
 
 class LearnedPolicy(nn.Module, PipelinePolicy):
     def __init__(self, num_stages: int, num_batches: int) -> None:

@@ -21,16 +21,16 @@ class Batch(ABC):
 
     def plot(self, ax: Axes, stage: float, height: float) -> None:
         x, y = self.execution_begin, stage
-        rect = patches.Rectangle((x, y), self.execution_time, height, linewidth=1, edgecolor='black',facecolor=self.color)
+        rect = patches.Rectangle((x, y), self.execution_time, height, linewidth=1, edgecolor='black', facecolor=self.color)
         ax.add_patch(rect)
         ax.text(x + self.execution_time / 4, y + height / 2, repr(self))
 
 
 class BubbleBatch(Batch):
-    def __init__(self, batch_idx: int,  execution_time: float, fail_slow: bool = False, min_begin_time: int = -1) -> None:
+    def __init__(self, batch_idx: int, execution_time: float, fail_slow: bool = False, min_begin_time: int = -1) -> None:
         super().__init__(batch_idx, execution_time, fail_slow, min_begin_time)
         self.color = '#FFFFFF'
-    
+
     def __repr__(self):
         return f"Z{self.batch_idx}"
 
@@ -39,7 +39,7 @@ class ForwardBatch(Batch):
     def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1) -> None:
         super().__init__(batch_idx, FORWARD_TIME, fail_slow, min_begin_time)
         self.color = '#FCCCB3'
-    
+
     def __repr__(self):
         return f"F{self.batch_idx}"
 
@@ -48,7 +48,7 @@ class BackwardWeightBatch(Batch):
     def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1) -> None:
         super().__init__(batch_idx, BACKWARD_WTIME, fail_slow, min_begin_time)
         self.color = '#FBE7A3'
-    
+
     def __repr__(self):
         return f"Bw{self.batch_idx}"
 
@@ -66,6 +66,6 @@ class BackwardBatch(Batch):
     def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1) -> None:
         super().__init__(batch_idx, BACKWARD_TIME, fail_slow, min_begin_time)
         self.color = '#8FAADC'
-    
+
     def __repr__(self):
         return f"B{self.batch_idx}"
