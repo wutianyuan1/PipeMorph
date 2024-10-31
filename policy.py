@@ -59,6 +59,26 @@ class PipeDreamPolicy(PipelinePolicy):
             return None
         return minidx
 
+# ZeroBubble (ICLR'24)
+class ZeroBubblePolicy(PipelinePolicy):
+    def __init__(self, num_stages: int) -> None:
+        super().__init__()
+        self.num_stages = num_stages
+
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None) -> int:
+        assert finish_queue is not None, "1F1B requires a non-null finish queue"
+        gpu_mem = 0
+        priority_map = {ForwardBatch: 2, BackwardWeightBatch: 1, BackwardInputBatch: 3}
+        minval, minidx = (float("inf"), float("inf")), -1
+        for i, batch in enumerate(task_queue):
+            cur = (-priority_map[type(batch)], batch.batch_idx)
+            if cur < minval:
+                minval = cur
+                minidx = i
+        # If in-memory activations >= num_stages, then we cannot execute subsequent forwards
+        if gpu_mem >= self.num_stages and isinstance(task_queue[minidx], ForwardBatch):
+            return None
+        return minidx
 
 class MockAgentNet(nn.Module):
     def __init__(self, B=10, embedding_dim=4):
