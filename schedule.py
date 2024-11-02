@@ -86,7 +86,7 @@ class PipelineSimulator(object):
                     continue
                 # If there are available tasks
                 # print(f"===Stage={i}, task={self.task_queues[i]}, finish={self.history_queues[i]}")
-                batch_pos = self.policy.pick_batch_to_run(self.task_queues[i], self.history_queues[i])
+                batch_pos = self.policy.pick_batch_to_run(self.task_queues[i], self.history_queues[i], time)
                 if batch_pos is None or time < self.task_queues[i][batch_pos].min_begin_time:
                     continue
                 batch = self.task_queues[i].pop(batch_pos)
@@ -122,14 +122,15 @@ class PipelineSimulator(object):
 def main() -> None:
     num_stages, num_batches = 4, 8
     # Please comment out the unused policies
-    policy = PipeDreamPolicy(num_stages)
-    policy = LearnedPolicy(num_stages, num_batches)
+    # policy = PipeDreamPolicy(num_stages)
+    # policy = LearnedPolicy(num_stages, num_batches)
     policy = GpipePolicy()
-    policy = ZeroBubblePolicy(num_stages)
-    simulator = PipelineSimulator(num_stages, num_batches, policy, [], {(2, 3): 10}, True)
+    # policy = ZeroBubblePolicy(num_stages)
+    simulator = PipelineSimulator(num_stages, num_batches, policy, [], {(1, 2): 10, (2, 3): 10}, True)
     simulator.simulate()
     simulator.plot()
     plt.show()
+    plt.savefig("test11.png")
 
 
 if __name__ == '__main__':

@@ -11,7 +11,7 @@ class PipelinePolicy(ABC):
         pass
 
     @abstractmethod
-    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None) -> int:
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0) -> int:
         pass
 
 
@@ -20,7 +20,7 @@ class GpipePolicy(PipelinePolicy):
     def __init__(self) -> None:
         super().__init__()
 
-    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None) -> int:
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0) -> int:
         priority_map = {ForwardBatch: 3, BackwardInputBatch: 2, BackwardBatch: 2, BackwardWeightBatch: 1}
         minval, minidx = (float("inf"), float("inf")), -1
         for i, batch in enumerate(task_queue):
@@ -37,7 +37,7 @@ class PipeDreamPolicy(PipelinePolicy):
         super().__init__()
         self.num_stages = num_stages
 
-    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None) -> int:
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0) -> int:
         assert finish_queue is not None, "1F1B requires a non-null finish queue"
         gpu_mem = 0
         for b in finish_queue:
@@ -67,9 +67,8 @@ class ZeroBubblePolicy(PipelinePolicy):
         super().__init__()
         self.num_stages = num_stages
 
-    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None) -> int:
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0) -> int:
         assert finish_queue is not None, "1F1B requires a non-null finish queue"
-        gpu_mem = 0
         priority_map = {ForwardBatch: 2, BackwardWeightBatch: 1, BackwardInputBatch: 3}
         minval, minidx = (float("inf"), float("inf")), -1
         for i, batch in enumerate(task_queue):
@@ -77,10 +76,18 @@ class ZeroBubblePolicy(PipelinePolicy):
             if cur < minval:
                 minval = cur
                 minidx = i
-        # If in-memory activations >= num_stages, then we cannot execute subsequent forwards
-        if gpu_mem >= self.num_stages and isinstance(task_queue[minidx], ForwardBatch):
-            return None
-        return minidx
+       
+        if minidx == -1 or time < task_queue[minidx].min_begin_time:
+            minval = (float("inf"), float("inf"))
+            # find bw fw batch to fill the bubble
+            for i, batch in enumerate(task_queue):
+                if batch.min_begin_time <= time:
+                    cur = (-priority_map[type(batch)], batch.batch_idx)
+                    if cur < minval:
+                        minval = cur
+                        minidx = i
+            
+        return minidx  
 
 
 class MockAgentNet(nn.Module):
@@ -120,7 +127,7 @@ class LearnedPolicy(nn.Module, PipelinePolicy):
         self.num_batches = num_batches
         self.net = MockAgentNet(self.num_batches)
 
-    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None) -> int:
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0) -> int:
         assert finish_queue is not None, "1F1B requires a non-null finish queue"
         # probs = self.net(prepare_input(task_queue, finish_queue, 2 * self.num_batches).unsqueeze(0)).squeeze()
         probs = torch.rand(3)
