@@ -30,6 +30,9 @@ from megatron.timers import Timer
 from megatron.utils import is_second_last_pipeline_stage
 
 CHECK_INTERVAL = 2
+TIME_BUFFER_SIZE = 4
+EXEC_TIME_PROFILE_END_ITER=5
+SCHEDULE_UPDATE_START_ITER=6
 AUTO_SCHEDULE_COMMUNICATION_TYPES = {'RECV_FORWARD', 'RECV_BACKWARD', 'SEND_FORWARD', 'SEND_BACKWARD'}
 
 
@@ -51,7 +54,7 @@ class ScheduleTimers:
         self.b_mem = 0
     
     def conclusion(self):
-        assert self.concluded
+        # assert self.concluded
         assert self.f_cnt > 0
         assert self.b_cnt > 0
         avg_f = int(self.f.elapsed(reset=False) / self.f_cnt * 1000000)
@@ -168,10 +171,18 @@ def fused_pipeline_ops(
         )
         ops.append(recv_next_op)
     if len(ops) > 0:
-        reqs = torch.distributed.batch_isend_irecv(ops)
+        # print(f"[Rank {torch.distributed.get_rank()}]", len(tensor_recv_next), len(tensor_recv_prev), len(tensor_send_next), len(tensor_send_prev))
+        if len(tensor_recv_prev) + len(tensor_recv_next) > 0:
+            # start, end = start_a_timer()
+            reqs = torch.distributed.batch_isend_irecv(ops)
+            # t = elapsed_time(start, end)
+            t = 0
+            return reqs, t
+        else:
+            reqs = torch.distributed.batch_isend_irecv(ops)
     else:
         reqs = []
-    return reqs
+    return reqs, None
 
 
 class ZeroBubbleVPipeScheduler:
@@ -717,6 +728,25 @@ class ZeroBubbleVPipeScheduler:
         return result
 
 
+def start_a_timer():
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record(stream=torch.cuda.current_stream())
+    return start, end
+
+def elapsed_time(start: torch.cuda.Event, end: torch.cuda.Event):
+    end.record(stream=torch.cuda.current_stream())
+    end.synchronize()
+    # torch.cuda.synchronize()
+    return start.elapsed_time(end)
+
+
+class MicroBatch:
+    def __init__(self, minibatch: int, type: str):
+        self.minibatch = minibatch
+        self.type = type
+
+
 class ZeroBubbleScheduler:
 
     def __init__(self):
@@ -742,11 +772,29 @@ class ZeroBubbleScheduler:
         self.is_first_run = True
         self.optimizer = None
 
+        self.stage = torch.distributed.get_rank()
+        self.num_stages = parallel_state.get_pipeline_model_parallel_world_size()
+
         # For network delay simulation
         self.client = redis.StrictRedis('localhost', port=6379, db=0)
         self.iter_cnt = 0
         self.sleep_time = 0
         self.slow_links = []
+
+        # For execution and communication time profiling
+        # Information format: [total seconds, times of exection or reception]
+        # An entry: xxxx_time_buffer[0] = [iteration index, time information of this iteration]
+        self.exec_time_buffer = [[]] * TIME_BUFFER_SIZE
+        self.recv_time_buffer = [[]] * TIME_BUFFER_SIZE
+        self.exec_time_buffer[0] = [None, {"F": [0, 0], "B": [0, 0], "W": [0, 0]}]
+        self.recv_time_buffer[0] = [None, {"prev": [0, 0], "next": [0, 0]}]
+        self.exec_time = {"F": -1, "B": -1, "W": -1}
+        if self.stage == 0:
+            self.recv_time = {"next": -1}
+        elif self.stage == self.num_stages - 1:
+            self.recv_time = {"prev": -1}
+        else:
+            self.recv_time = {"prev": -1, "next": -1}
 
     def _free_buffers(self):
         self.input_tensors = []
@@ -766,6 +814,8 @@ class ZeroBubbleScheduler:
                 self.sleep_time = float(raw_sleep_time)
             except:
                 pass
+        else:
+            self.sleep_time = 0
         raw_slow_links = self.client.get("slow_links")
         # raw_slow_links: "(src_dst,)+"
         if raw_slow_links is not None:
@@ -777,6 +827,85 @@ class ZeroBubbleScheduler:
                     self.slow_links.append([int(i) for i in link.split("_")])
             except:
                 pass
+        else:
+            self.slow_links = []
+
+    def _update_exec_time_buffer(self, task_type: str, start: torch.cuda.Event, end: torch.cuda.Event, cnt: int = 1):
+        if self.iter_cnt <= EXEC_TIME_PROFILE_END_ITER:
+            end.record(stream=torch.cuda.current_stream())
+            end.synchronize()
+            self.exec_time_buffer[(self.iter_cnt - 1) % TIME_BUFFER_SIZE][1][task_type][0] += start.elapsed_time(end)
+            self.exec_time_buffer[(self.iter_cnt - 1) % TIME_BUFFER_SIZE][1][task_type][1] += cnt
+
+    # def _update_recv_time(self, recv_from: str, start: torch.cuda.Event, end: torch.cuda.Event):
+    #     end.record(stream=torch.cuda.current_stream())
+    #     end.synchronize()
+    #     self.recv_time_buffer[(self.iter_cnt - 1) % TIME_BUFFER_SIZE][1][recv_from][0] += start.elapsed_time(end)
+    #     self.recv_time_buffer[(self.iter_cnt - 1) % TIME_BUFFER_SIZE][1][recv_from][1] += 1
+
+    def _update_recv_time_buffer(self, recv_froms: list[str], elapsed_time: float):
+        for recv_from in recv_froms:
+            self.recv_time_buffer[(self.iter_cnt - 1) % TIME_BUFFER_SIZE][1][recv_from][0] += elapsed_time
+            self.recv_time_buffer[(self.iter_cnt - 1) % TIME_BUFFER_SIZE][1][recv_from][1] += 1
+
+    def _update_exec_time(self):
+        for task_type in self.exec_time:
+            t, cnt = 0, 0
+            for entry in self.exec_time_buffer:
+                if len(entry) > 0:
+                    t += entry[1][task_type][0]
+                    cnt += entry[1][task_type][1]
+            self.exec_time[task_type] = t / cnt
+
+    def _update_recv_time(self):
+        for recv_from in self.recv_time:
+            t, cnt = 0, 0
+            for entry in self.recv_time_buffer:
+                if len(entry) > 0:
+                    t += entry[1][recv_from][0]
+                    cnt += entry[1][recv_from][1]
+            if cnt != 0:
+                self.recv_time[recv_from] = t / cnt
+
+    def _update_schedule(self):
+        while True:
+            raw_schedule = self.client.get("schedule")
+            if raw_schedule is not None:
+                # TODO
+                # maunal_orders = [
+                #                             "fffffffbfbfbfbfbfbwbwbwbwbwbwbwwwwww",
+                #                              "fffffbfbfbfbfbfbfbfbwbwbwbwbwwwwwwww",
+                #                               "fffbfbfbfbfbfbfbfbfbfbwbwbwwwwwwwwww",
+                #                                "fbfbfbfbfbfbfbfbfbfbfbfbwwwwwwwwwwww"]
+                # maunal_orders = [
+                #                             "f f f f f f f f f f f f             b b b b b b b b b b b b w w w w w w w w w w w w",
+                #                               "f f f f f f f f f f f f         b b b b b b b b b b b b w w w w w w w w w w w w",
+                #                                 "f f f f f f f f f f f f     b b b b b b b b b b b b w w w w w w w w w w w w",
+                #                                   "f f f f f f f f f f f f b b b b b b b b b b b b w w w w w w w w w w w w"]
+                maunal_orders = [
+                                            "f f f f f f             b b b b b b w w w w w w f f f f f f             b b b b b b w w w w w w",
+                                              "f f f f f f         b b b b b b w w w w w w     f f f f f f         b b b b b b w w w w w w",
+                                                "f f f f f f     b b b b b b w w w w w w         f f f f f f     b b b b b b w w w w w w",
+                                                  "f f f f f f b b b b b b w w w w w w             f f f f f f b b b b b b w w w w w w"]
+                # maunal_orders = [
+                #                             "f f f f       b w   b w   b w   b w",
+                #                               "f f f     b w f b w   b w   b w",
+                #                                 "f f   b w f b w f b w   b w",
+                #                                   "f b w f b w f b w f b w"]
+                maunal_orders = [
+                                            "f f           b w   b w",
+                                              "f f       b w   b w",
+                                                "f f   b w   b w",
+                                                  "f b w f b w"]
+                schedules = []
+                minibatch = {"f": 0, "b": 0, "w": 0}
+                # for mb in maunal_orders[self.stage]:
+                for mb in maunal_orders[self.stage].split():
+                    schedules.append(MicroBatch(minibatch[mb], mb.upper()))
+                    minibatch[mb] += 1
+                self.schedules = schedules
+                break
+        print_rank_0("Update schedules")
 
     def _reset(self):
         # Input, output tensors only need to be saved when doing backward passes
@@ -839,19 +968,32 @@ class ZeroBubbleScheduler:
         ]
         if get_args().profile:
             torch.cuda.nvtx.range_push(name)
-        req = fused_pipeline_ops(
+        # if len(rn_tensors) > 0:
+        #     print(rn_tensors[0].sum())
+        req, recv_time = fused_pipeline_ops(
             sp_tensors,
             rp_tensors,
             sn_tensors,
             rn_tensors
         )
+        # if len(rn_tensors) > 0:
+        #     print(rn_tensors[0].sum())
+        if recv_time:
+            if len(rp_tensors) + len(rn_tensors) == 2:
+                self._update_recv_time_buffer(["prev", "next"], recv_time)
+            elif len(rp_tensors) == 1:
+                self._update_recv_time_buffer(["prev"], recv_time)
+            elif len(rn_tensors) == 1:
+                self._update_recv_time_buffer(["next"], recv_time)
+            else:
+                raise ValueError
         if get_args().profile:
             torch.cuda.nvtx.range_pop()
         # We don't care about the reqs order here, all users need to all reqs to finish
         for x in self.communication_batch['RECV_NEXT']:
             self.buffer_map(x[0]).append(([rn_tensors.pop(0)], [req]))
         for x in self.communication_batch['RECV_PREV']:
-            self.buffer_map(x[0]).append(([rp_tensors.pop(index=0)], [req]))
+            self.buffer_map(x[0]).append(([rp_tensors.pop(0)], [req]))
         self.send_handles.append([req])
         assert(not rn_tensors)
         assert(not rp_tensors)
@@ -887,17 +1029,39 @@ class ZeroBubbleScheduler:
         if core.parallel_state.is_pipeline_first_stage():
             input_tensor = [None] * len(self.recv_tensor_shapes)
         else:
-            for (_, next) in self.slow_links:
-                if torch.distributed.get_rank() == next:
-                    time.sleep(self.sleep_time)
-                    break
+            # t_start = time.time()
+            # t = Timer("receive-forward")
+            # t.start()
+            # start = torch.cuda.Event(enable_timing=True)
+            # end = torch.cuda.Event(enable_timing=True)
+            # start.record(stream=torch.cuda.current_stream())
+            # start, end = start_a_timer()
+
+            # for (_, next) in self.slow_links:
+            #     if self.stage == next:
+            #         time.sleep(self.sleep_time)
+            #         break
             input_tensor = self.recv_forward_buffer.pop(0)
             for h in input_tensor[1]:
                 for hh in h:
                     hh.wait()
             input_tensor = input_tensor[0]
+            # self.recv_time_buffer[self.new_iter_idx][1]["prev"][0] += time.time() - t_start
+            # self.recv_time_buffer[self.new_iter_idx][1]["prev"][0] += t.elapsed()
+            # end.record(stream=torch.cuda.current_stream())
+            # end.synchronize()
+            # self.recv_time_buffer[self.new_iter_idx][1]["prev"][0] += start.elapsed_time(end)
+            # self.recv_time_buffer[self.new_iter_idx][1]["prev"][1] += 1
+            # self._update_recv_time("prev", start, end)
         if get_args().profile:
             torch.cuda.nvtx.range_push(f'F{scheduled_node.minibatch}')
+        # t_start = time.time()
+        # t = Timer("forward")
+        # t.start()
+        # start = torch.cuda.Event(enable_timing=True)
+        # end = torch.cuda.Event(enable_timing=True)
+        # start.record(stream=torch.cuda.current_stream())
+        start, end = start_a_timer()
         if self.run_timer:
             ScheduleTimers.for_chunk(0).f_cnt += 1
             ScheduleTimers.for_chunk(0).f.start()
@@ -916,6 +1080,13 @@ class ZeroBubbleScheduler:
         if self.run_timer:
             ScheduleTimers.for_chunk(0).f.stop()
             ScheduleTimers.for_chunk(0).f_mem += torch.cuda.memory_allocated() - mem_before
+        # self.exec_time_buffer[self.new_iter_idx][1]["F"][0] += time.time() - t_start
+        # self.exec_time_buffer[self.new_iter_idx][1]["F"][0] += t.elapsed()
+        # end.record(stream=torch.cuda.current_stream())
+        # end.synchronize()
+        # self.exec_time_buffer[self.new_iter_idx][1]["F"][0] += start.elapsed_time(end)
+        # self.exec_time_buffer[self.new_iter_idx][1]["F"][1] += 1
+        self._update_exec_time_buffer("F", start, end)
         if get_args().profile:
             torch.cuda.nvtx.range_pop()
         if not core.parallel_state.is_pipeline_last_stage():
@@ -935,17 +1106,39 @@ class ZeroBubbleScheduler:
                 # Keep the original behavior when we do a dummy communication
                 output_tensor_grad = [None] * len(self.send_tensor_shapes)
             else:
-                for (prev, _) in self.slow_links:
-                    if torch.distributed.get_rank() == prev:
-                        time.sleep(self.sleep_time)
-                        break
+                # t_start = time.time()
+                # t = Timer("receive-backward")
+                # t.start()
+                # start = torch.cuda.Event(enable_timing=True)
+                # end = torch.cuda.Event(enable_timing=True)
+                # start.record(stream=torch.cuda.current_stream())
+                # start, end = start_a_timer()
+
+                # for (prev, _) in self.slow_links:
+                #     if self.stage == prev:
+                #         time.sleep(self.sleep_time)
+                #         break
                 output_tensor_grad = self.recv_backward_buffer.pop(0)
                 for h in output_tensor_grad[1]:
                     for hh in h:
                         hh.wait()
                 output_tensor_grad = output_tensor_grad[0]
+                # self.recv_time_buffer[self.new_iter_idx][1]["next"][0] += time.time() - t_start
+                # self.recv_time_buffer[self.new_iter_idx][1]["next"][0] += t.elapsed()
+                # end.record(stream=torch.cuda.current_stream())
+                # end.synchronize()
+                # self.recv_time_buffer[self.new_iter_idx][1]["next"][0] += start.elapsed_time(end)
+                # self.recv_time_buffer[self.new_iter_idx][1]["next"][1] += 1
+                # self._update_recv_time("next", start, end)
             if get_args().profile:
                 torch.cuda.nvtx.range_push(f'B{scheduled_node.minibatch}')
+            # t_start = time.time()
+            # t = Timer("backward-input")
+            # t.start()
+            # start = torch.cuda.Event(enable_timing=True)
+            # end = torch.cuda.Event(enable_timing=True)
+            # start.record(stream=torch.cuda.current_stream())
+            start, end = start_a_timer()
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).b_cnt += 1
                 ScheduleTimers.for_chunk(0).b.start()
@@ -957,6 +1150,13 @@ class ZeroBubbleScheduler:
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).b.stop()
                 ScheduleTimers.for_chunk(0).b_mem += torch.cuda.memory_allocated() - mem_before
+            # self.exec_time_buffer[self.new_iter_idx][1]["B"][0] += time.time() - t_start
+            # self.exec_time_buffer[self.new_iter_idx][1]["B"][0] += t.elapsed()
+            # end.record(stream=torch.cuda.current_stream())
+            # end.synchronize()
+            # self.exec_time_buffer[self.new_iter_idx][1]["B"][0] += start.elapsed_time(end)
+            # self.exec_time_buffer[self.new_iter_idx][1]["B"][1] += 1
+            self._update_exec_time_buffer("B", start, end)
             if get_args().profile:
                 torch.cuda.nvtx.range_pop()
             self.send_backward_buffer.append(input_tensor_grad)
@@ -964,6 +1164,13 @@ class ZeroBubbleScheduler:
 
     def schedule_w(self, scheduled_node, non_w_pending):
         if not self.forward_only and non_w_pending:
+            # t_start = time.time()
+            # t = Timer("backward-input")
+            # t.start()
+            # start = torch.cuda.Event(enable_timing=True)
+            # end = torch.cuda.Event(enable_timing=True)
+            # start.record(stream=torch.cuda.current_stream())
+            start, end = start_a_timer()
             if get_args().profile:
                 torch.cuda.nvtx.range_push(f'W{scheduled_node.minibatch}')
             if self.run_timer:
@@ -974,6 +1181,13 @@ class ZeroBubbleScheduler:
                 ScheduleTimers.for_chunk(0).w.stop()
             if get_args().profile:
                 torch.cuda.nvtx.range_pop()
+            # self.exec_time_buffer[self.new_iter_idx][1]["W"][0] += time.time() - t_start
+            # self.exec_time_buffer[self.new_iter_idx][1]["W"][0] += t.elapsed()
+            # end.record(stream=torch.cuda.current_stream())
+            # end.synchronize()
+            # self.exec_time_buffer[self.new_iter_idx][1]["W"][0] += start.elapsed_time(end)
+            # self.exec_time_buffer[self.new_iter_idx][1]["W"][1] += 1
+            self._update_exec_time_buffer("W", start, end)
 
     def disable_grad_sync(self):
         """Disable asynchronous grad reductions"""
@@ -1062,6 +1276,7 @@ class ZeroBubbleScheduler:
             >= ScheduleTimers.iter_counter
             >= get_args().zero_bubble_pipeline_timers_start_iter
         )
+        # run_timer = True
 
         self.config = config
         self.model_type = model_type
@@ -1148,46 +1363,86 @@ class ZeroBubbleScheduler:
 
     def run(self):
         self.disable_grad_sync()
-        if self.iter_cnt % CHECK_INTERVAL == 0:
+        if self.iter_cnt % CHECK_INTERVAL == 0 and not self.forward_only:
             self._update_delay_info()
-            self.iter_cnt += 1
+        self.iter_cnt += 1
+        if self.iter_cnt >= SCHEDULE_UPDATE_START_ITER:
+            self._update_schedule()
 
         if get_args().profile:
             torch.cuda.nvtx.range_push(f'iter_{torch.distributed.get_rank()}_{ScheduleTimers.iter_counter}')
 
         it = self.it
-        # print_rank_0([n.type for n in self.schedules if n.type in AUTO_SCHEDULE_COMMUNICATION_TYPES or n.type in []])
-        while it < len(self.schedules):
-            scheduled_node = self.schedules[it]
-            if "POST_VALIDATION" in scheduled_node.type:
-                pass
-            elif scheduled_node.type in AUTO_SCHEDULE_COMMUNICATION_TYPES:
-                next_is_comm = it + 1 < len(self.schedules) and self.schedules[it + 1].type in AUTO_SCHEDULE_COMMUNICATION_TYPES
-                next_compute = list(filter(lambda x: x.type in ['F', 'B', 'W'], self.schedules[it + 1:]))
-                next_compute = next_compute[0] if len(next_compute) > 0 else None
-                self.add_communication(scheduled_node, next_is_comm, next_compute)
-            elif scheduled_node.type == 'F':
-                self.schedule_f(scheduled_node)
-            elif scheduled_node.type == 'B':
-                self.schedule_b(scheduled_node)
-            elif scheduled_node.type == 'W':
-                non_w_pending = any([node.type != 'W' for node in self.schedules[it + 1:]])
-                self.schedule_w(scheduled_node, non_w_pending)
-            else:
-                raise ValueError(f"Unknown node type {scheduled_node.type}")
-            it += 1
+        if self.iter_cnt < SCHEDULE_UPDATE_START_ITER:
+            # print(f"[Rank {self.stage}]", [n.type for n in self.schedules if n.type in AUTO_SCHEDULE_COMMUNICATION_TYPES or n.type in ["F", "B", "W"]])
+            while it < len(self.schedules):
+                scheduled_node = self.schedules[it]
+                if "POST_VALIDATION" in scheduled_node.type:
+                    pass
+                elif scheduled_node.type in AUTO_SCHEDULE_COMMUNICATION_TYPES:
+                    next_is_comm = it + 1 < len(self.schedules) and self.schedules[it + 1].type in AUTO_SCHEDULE_COMMUNICATION_TYPES
+                    next_compute = list(filter(lambda x: x.type in ['F', 'B', 'W'], self.schedules[it + 1:]))
+                    next_compute = next_compute[0] if len(next_compute) > 0 else None
+                    self.add_communication(scheduled_node, next_is_comm, next_compute)
+                elif scheduled_node.type == 'F':
+                    self.schedule_f(scheduled_node)
+                elif scheduled_node.type == 'B':
+                    self.schedule_b(scheduled_node)
+                elif scheduled_node.type == 'W':
+                    non_w_pending = any([node.type != 'W' for node in self.schedules[it + 1:]])
+                    self.schedule_w(scheduled_node, non_w_pending)
+                else:
+                    raise ValueError(f"Unknown node type {scheduled_node.type}")
+                it += 1
+        else:
+            while it < len(self.schedules):
+                scheduled_node = self.schedules[it]
+                print(f"[Rank {self.stage} Start] {scheduled_node.type}{scheduled_node.minibatch}")
+                if scheduled_node.type == "F":
+                    if self.stage != 0:
+                        self.add_communication(MicroBatch(scheduled_node.minibatch, "RECV_FORWARD"), True, scheduled_node)
+                    self.schedule_f(scheduled_node)
+                    if self.stage != self.num_stages - 1:
+                        self.add_communication(MicroBatch(scheduled_node.minibatch, "SEND_FORWARD"), False, None)
+                elif scheduled_node.type == "B":
+                    if self.stage != self.num_stages - 1:
+                        self.add_communication(MicroBatch(scheduled_node.minibatch, "RECV_BACKWARD"), True, scheduled_node)
+                    self.schedule_b(scheduled_node)
+                    if self.stage != 0:
+                        self.add_communication(MicroBatch(scheduled_node.minibatch, "SEND_BACKWARD"), False, None)
+                elif scheduled_node.type == "W":
+                    non_w_pending = any([node.type != 'W' for node in self.schedules[it + 1:]])
+                    self.schedule_w(scheduled_node, non_w_pending)
+                else:
+                    raise ValueError(f"Unknown node type {scheduled_node.type}")
+                it += 1
+                print(f"[Rank {self.stage} Done] {scheduled_node.type}{scheduled_node.minibatch}")
         self.it = it
 
         if get_args().profile:
             torch.cuda.nvtx.range_push('W')
         if not self.forward_only:
             pending_ws = WeightGradStore.weight_grad_queue[0].qsize()
+            # t_start = time.time()
+            # t = Timer("backward-weight")
+            # t.start()
+            # start = torch.cuda.Event(enable_timing=True)
+            # end = torch.cuda.Event(enable_timing=True)
+            # start.record(stream=torch.cuda.current_stream())
+            start, end = start_a_timer()
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).w_cnt += pending_ws
                 ScheduleTimers.for_chunk(0).w.start()
             WeightGradStore.clear(self.model)
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).w.stop()
+            # self.exec_time_buffer[self.new_iter_idx][1]["W"][0] += time.time() - t_start
+            # self.exec_time_buffer[self.new_iter_idx][1]["W"][0] += t.elapsed()
+            # end.record(stream=torch.cuda.current_stream())
+            # end.synchronize()
+            # self.exec_time_buffer[self.new_iter_idx][1]["W"][0] += start.elapsed_time(end)
+            # self.exec_time_buffer[self.new_iter_idx][1]["W"][1] += pending_ws
+            self._update_exec_time_buffer("W", start, end, pending_ws)
         if get_args().profile:
             torch.cuda.nvtx.range_pop()  # W
             torch.cuda.nvtx.range_pop()  # iter
@@ -1209,6 +1464,43 @@ class ZeroBubbleScheduler:
 
             if get_args().zero_bubble_pipeline_timers_end_iter == ScheduleTimers.iter_counter:
                 ScheduleTimers.concluded = True
+        if self.iter_cnt <= EXEC_TIME_PROFILE_END_ITER:
+            self.exec_time_buffer[(self.iter_cnt - 1) % TIME_BUFFER_SIZE][0] = self.iter_cnt
+        self.recv_time_buffer[(self.iter_cnt - 1) % TIME_BUFFER_SIZE][0] = self.iter_cnt
+        self._update_exec_time()
+        self._update_recv_time()
+        if not self.forward_only:
+            print(f"[Rank{self.stage}]", end="")
+            print({task_type: int(t) for task_type, t in self.exec_time.items()}, end="")
+            # if self.stage == 0:
+            #     recv_froms = ["next"]
+            # elif self.stage == self.num_stages - 1:
+            #     recv_froms = ["prev"]
+            # else:
+            #     recv_froms = ["prev", "next"]
+            # print({recv_from: [(self.recv_time_buffer[i][0], int(self.recv_time_buffer[i][1][recv_from][0] / self.recv_time_buffer[i][1][recv_from][1])) for i in range(TIME_BUFFER_SIZE) if len(self.recv_time_buffer[i]) > 0] for recv_from in recv_froms})
+            # print({recv_from: int(self._get_recv_time(recv_from)) for recv_from in recv_froms})
+            print({recv_from: int(t) for recv_from, t in self.recv_time.items()})
+
+            # for i in range(TIME_BUFFER_SIZE):
+            #     if len(self.exec_time_buffer[i]) > 0:
+            #         print(f"[Iter{self.exec_time_buffer[i][0]:2}]",
+            #         {k: (int(v[0] / v[1]), v[1]) for k, v in self.exec_time_buffer[i][1].items()})
+            #         # print(ScheduleTimers.for_chunk(0).conclusion())
+            #     else:
+            #         print("[Empty]")
+            # for i in range(TIME_BUFFER_SIZE):
+            #     if len(self.recv_time_buffer[i]) > 0:
+            #         print(f"[Iter{self.recv_time_buffer[i][0]:2}]",
+            #         {k: (int(v[0] / v[1]), v[1]) for k, v in self.recv_time_buffer[i][1].items() if v[1] != 0})
+            #         # print(ScheduleTimers.for_chunk(0).conclusion())
+            #     else:
+            #         print("[Empty]")
+
+        # Prepare for the next iteration
+        if self.iter_cnt + 1 <= EXEC_TIME_PROFILE_END_ITER:
+            self.exec_time_buffer[self.iter_cnt % TIME_BUFFER_SIZE] = [None, {"F": [0, 0], "B": [0, 0], "W": [0, 0]}]
+        self.recv_time_buffer[self.iter_cnt % TIME_BUFFER_SIZE] = [None, {"prev": [0, 0], "next": [0, 0]}]
         return self.forward_data_store
 
     def __call__(self, *args, **kwargs):
