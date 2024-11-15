@@ -872,40 +872,31 @@ class ZeroBubbleScheduler:
             raw_schedule = self.client.get("schedule")
             if raw_schedule is not None:
                 # TODO
-                # maunal_orders = [
-                #                             "fffffffbfbfbfbfbfbwbwbwbwbwbwbwwwwww",
-                #                              "fffffbfbfbfbfbfbfbfbwbwbwbwbwwwwwwww",
-                #                               "fffbfbfbfbfbfbfbfbfbfbwbwbwwwwwwwwww",
-                #                                "fbfbfbfbfbfbfbfbfbfbfbfbwwwwwwwwwwww"]
-                # maunal_orders = [
-                #                             "f f f f f f f f f f f f             b b b b b b b b b b b b w w w w w w w w w w w w",
-                #                               "f f f f f f f f f f f f         b b b b b b b b b b b b w w w w w w w w w w w w",
-                #                                 "f f f f f f f f f f f f     b b b b b b b b b b b b w w w w w w w w w w w w",
-                #                                   "f f f f f f f f f f f f b b b b b b b b b b b b w w w w w w w w w w w w"]
-                maunal_orders = [
-                                            "f f f f f f             b b b b b b w w w w w w f f f f f f             b b b b b b w w w w w w",
-                                              "f f f f f f         b b b b b b w w w w w w     f f f f f f         b b b b b b w w w w w w",
-                                                "f f f f f f     b b b b b b w w w w w w         f f f f f f     b b b b b b w w w w w w",
-                                                  "f f f f f f b b b b b b w w w w w w             f f f f f f b b b b b b w w w w w w"]
-                # maunal_orders = [
-                #                             "f f f f       b w   b w   b w   b w",
-                #                               "f f f     b w f b w   b w   b w",
-                #                                 "f f   b w f b w f b w   b w",
-                #                                   "f b w f b w f b w f b w"]
-                maunal_orders = [
-                                            "f f           b w   b w",
-                                              "f f       b w   b w",
-                                                "f f   b w   b w",
-                                                  "f b w f b w"]
-                schedules = []
-                minibatch = {"f": 0, "b": 0, "w": 0}
-                # for mb in maunal_orders[self.stage]:
-                for mb in maunal_orders[self.stage].split():
-                    schedules.append(MicroBatch(minibatch[mb], mb.upper()))
-                    minibatch[mb] += 1
+                # policy = '1f1b'
+                policy = 'GPipe'
+                maunal_orders = {
+                    '1f1b': ["f f f f       b w f b w f b w f b w f b w f b w f b w f b w f b w   b w   b w   b w",
+                               "f f f     b w f b w f b w f b w f b w f b w f b w f b w f b w f b w   b w   b w",
+                                 "f f   b w f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w   b w",
+                                   "f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w"],
+                    'GPipe': ["f f f f f f             b b b b b b w w w w w w f f f f f f             b b b b b b w w w w w w",
+                                "f f f f f f         b b b b b b w w w w w w     f f f f f f         b b b b b b w w w w w w",
+                                  "f f f f f f     b b b b b b w w w w w w         f f f f f f     b b b b b b w w w w w w",
+                                    "f f f f f f b b b b b b w w w w w w             f f f f f f b b b b b b w w w w w w"],
+                    # 'GPipe': ["f f f f f f f f f f f f             b b b b b b b b b b b b w w w w w w w w w w w w",
+                    #             "f f f f f f f f f f f f         b b b b b b b b b b b b w w w w w w w w w w w w",
+                    #               "f f f f f f f f f f f f     b b b b b b b b b b b b w w w w w w w w w w w w",
+                    #                 "f f f f f f f f f f f f b b b b b b b b b b b b w w w w w w w w w w w w"],
+                }
+                schedules = [[] for _ in range(self.num_stages)]
+                for i in range(self.num_stages):
+                    minibatch = {"f": 0, "b": 0, "w": 0}
+                    for mb in maunal_orders[policy][i].split():
+                        schedules[i].append(MicroBatch(minibatch[mb], mb.upper()))
+                        minibatch[mb] += 1
                 self.schedules = schedules
+                print_rank_0(f"New schedules: {policy}")
                 break
-        print_rank_0("Update schedules")
 
     def _reset(self):
         # Input, output tensors only need to be saved when doing backward passes
@@ -1374,7 +1365,7 @@ class ZeroBubbleScheduler:
 
         it = self.it
         if self.iter_cnt < SCHEDULE_UPDATE_START_ITER:
-            # print(f"[Rank {self.stage}]", [n.type for n in self.schedules if n.type in AUTO_SCHEDULE_COMMUNICATION_TYPES or n.type in ["F", "B", "W"]])
+            # print(f"[Rank{self.stage}]", [n.type for n in self.schedules if n.type in AUTO_SCHEDULE_COMMUNICATION_TYPES or n.type in ["F", "B", "W"]])
             while it < len(self.schedules):
                 scheduled_node = self.schedules[it]
                 if "POST_VALIDATION" in scheduled_node.type:
@@ -1395,28 +1386,51 @@ class ZeroBubbleScheduler:
                     raise ValueError(f"Unknown node type {scheduled_node.type}")
                 it += 1
         else:
-            while it < len(self.schedules):
-                scheduled_node = self.schedules[it]
-                print(f"[Rank {self.stage} Start] {scheduled_node.type}{scheduled_node.minibatch}")
+            while it < len(self.schedules[self.stage]):
+                scheduled_node = self.schedules[self.stage][it]
+                # print(f"[Rank{self.stage} TODO] {scheduled_node.type}{scheduled_node.minibatch}")
                 if scheduled_node.type == "F":
                     if self.stage != 0:
-                        self.add_communication(MicroBatch(scheduled_node.minibatch, "RECV_FORWARD"), True, scheduled_node)
+                        self.add_communication(MicroBatch(scheduled_node.minibatch, "RECV_FORWARD"), False, scheduled_node)
                     self.schedule_f(scheduled_node)
                     if self.stage != self.num_stages - 1:
                         self.add_communication(MicroBatch(scheduled_node.minibatch, "SEND_FORWARD"), False, None)
                 elif scheduled_node.type == "B":
                     if self.stage != self.num_stages - 1:
-                        self.add_communication(MicroBatch(scheduled_node.minibatch, "RECV_BACKWARD"), True, scheduled_node)
+                        self.add_communication(MicroBatch(scheduled_node.minibatch, "RECV_BACKWARD"), False, scheduled_node)
                     self.schedule_b(scheduled_node)
                     if self.stage != 0:
-                        self.add_communication(MicroBatch(scheduled_node.minibatch, "SEND_BACKWARD"), False, None)
+                        if it == len(self.schedules[self.stage]) - 1:
+                            next_is_comm = False
+                        else:
+                            b_mb = scheduled_node.minibatch
+                            followed_by_f = False
+                            for i in range(it + 1, len(self.schedules[self.stage])):
+                                if self.schedules[self.stage][i].type == 'F':
+                                    followed_by_f = True
+                                    f_mb = self.schedules[self.stage][i].minibatch
+                                    idx_b, idx_f = -1, -1
+                                    for j in range(len(self.schedules[self.stage - 1])):
+                                        node = self.schedules[self.stage - 1][j]
+                                        if node.type == 'F' and node.minibatch == f_mb:
+                                            idx_f = j
+                                        if node.type == 'B' and node.minibatch == b_mb:
+                                            idx_b = j
+                                        if idx_f != -1 and idx_b != -1:
+                                            break
+                                    break
+                            if not followed_by_f:
+                                next_is_comm = False
+                            else:
+                                next_is_comm = idx_f < idx_b
+                        self.add_communication(MicroBatch(scheduled_node.minibatch, "SEND_BACKWARD"), next_is_comm, None)
                 elif scheduled_node.type == "W":
-                    non_w_pending = any([node.type != 'W' for node in self.schedules[it + 1:]])
+                    non_w_pending = any([node.type != 'W' for node in self.schedules[self.stage][it + 1:]])
                     self.schedule_w(scheduled_node, non_w_pending)
                 else:
                     raise ValueError(f"Unknown node type {scheduled_node.type}")
                 it += 1
-                print(f"[Rank {self.stage} Done] {scheduled_node.type}{scheduled_node.minibatch}")
+                # print(f"[Rank{self.stage} Done] {scheduled_node.type}{scheduled_node.minibatch}")
         self.it = it
 
         if get_args().profile:
