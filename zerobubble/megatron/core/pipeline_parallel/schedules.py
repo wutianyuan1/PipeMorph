@@ -13,7 +13,7 @@ from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel import p2p_communication
 from megatron.core.utils import get_attr_wrapped_model, get_model_config, get_model_type, reset_random_state
 
-SLEEP_TIME = 0.1
+SLEEP_TIME = 0
 SLOW_LINKS = []
 
 # Types
