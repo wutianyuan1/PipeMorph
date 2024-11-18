@@ -872,9 +872,7 @@ class ZeroBubbleScheduler:
             raw_schedule = self.client.get("schedule")
             if raw_schedule is not None:
                 # TODO
-                # policy = '1f1b'
-                policy = 'GPipe'
-                maunal_orders = {
+                orders = {
                     '1f1b': ["f f f f       b w f b w f b w f b w f b w f b w f b w f b w f b w   b w   b w   b w",
                                "f f f     b w f b w f b w f b w f b w f b w f b w f b w f b w f b w   b w   b w",
                                  "f f   b w f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w   b w",
@@ -883,15 +881,56 @@ class ZeroBubbleScheduler:
                                 "f f f f f f         b b b b b b w w w w w w     f f f f f f         b b b b b b w w w w w w",
                                   "f f f f f f     b b b b b b w w w w w w         f f f f f f     b b b b b b w w w w w w",
                                     "f f f f f f b b b b b b w w w w w w             f f f f f f b b b b b b w w w w w w"],
+                    'Manual': ["f f f f       b w f b w f b w   b w   b w   b w f f f f f f             b b b b b b w w w w w w",
+                                 "f f f     b w f b w f b w f b w   b w   b w     f f f f f f         b b b b b b w w w w w w",
+                                   "f f   b w f b w f b w f b w f b w   b w         f f f f f f     b b b b b b w w w w w w",
+                                     "f b w f b w f b w f b w f b w f b w             f f f f f f b b b b b b w w w w w w"],
                     # 'GPipe': ["f f f f f f f f f f f f             b b b b b b b b b b b b w w w w w w w w w w w w",
                     #             "f f f f f f f f f f f f         b b b b b b b b b b b b w w w w w w w w w w w w",
                     #               "f f f f f f f f f f f f     b b b b b b b b b b b b w w w w w w w w w w w w",
                     #                 "f f f f f f f f f f f f b b b b b b b b b b b b w w w w w w w w w w w w"],
+                    # 'ZeroBubble': [
+                    #     "f f f f f f f b f b f b f b f b f b w b w b w b w b w b w b w w w w w w",
+                    #       "f f f f f b f b f b f b f b f b f b f b w b w b w b w b w w w w w w w w",
+                    #         "f f f b f b f b f b f b f b f b f b f b f b w b w b w w w w w w w w w w",
+                    #           "f b f b f b f b f b f b f b f b f b f b f b f b w w w w w w w w w w w w"],
+                    'ZeroBubble': [
+                        "f f f f f f f b f b w f b b w f b b w f b b w f w w w w b w b w b w b w",
+                          "f f f f f b f b f b f b w f b b w f b b w f b w f b w w b w w b w w w w",
+                            "f f f b f b f b f b f b f b w f b b w f b w f b w f b w w b w w w w w w",
+                              "f b f b f b f b f b f b f b f b w f b w f b w f b w f b w w w w w w w w"],
+                    # Rank0 ['F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'RECV_BACKWARD', 'W', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'B', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'B', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'B', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'W', 'W', 'RECV_BACKWARD', 'W', 'W', 'B', 'RECV_BACKWARD', 'W', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'B', 'W']
+                    # Rank1 ['RECV_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'F', 'RECV_FORWARD', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'W', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'W', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'W', 'B', 'SEND_BACKWARD', 'W', 'W', 'W', 'W']
+                    # Rank2 ['RECV_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'F', 'RECV_FORWARD', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'W', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'W', 'B', 'SEND_BACKWARD', 'W', 'W', 'W', 'W', 'W', 'W']
+                    # Rank3 ['RECV_FORWARD', 'RECV_FORWARD', 'F', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'F', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'F', 'B', 'SEND_BACKWARD', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W']
+                    
+                    'For0->1Slow': [
+                        "f f f f f f f f f f f f   b w b w b w b w b w b w b w b w b w b w b w b w",
+                                "f f f f f b f b f b f b f b f b f b f b w b w b w b w b w w w w w w w w",
+                                  "f f f b f b f b f b f b f b f b f b f b f b w b w b w w w w w w w w w w",
+                                    "f b f b f b f b f b f b f b f b f b f b f b f b w w w w w w w w w w w w"],
+                    # # [Rank0 TODO] F8
+                    # # [Rank1 TODO] F9
+                    # # [Rank2 TODO] F8
+                    # # [Rank3 TODO] F3
+                    # 'For1->2Slow': [
+                    #     "f f f f f f f f f f f f   b w b w b w b w b w b w b w b w b w b w b w b w",
+                    #       "f f f f f f f f f f f b f b w b w b w b w b w b w b w b w b w b w b w w",
+                    #               "f f f b f b f b f b f b f b f b f b f b f b w b w b w w w w w w w w w w",
+                    #                 "f b f b f b f b f b f b f b f b f b f b f b f b w w w w w w w w w w w w"],
+                    # 'For2->3Slow': [
+                    #     "f f f f f f f f f f f f   b w b w b w b w b w b w b w b w b w b w b w b w",
+                    #       "f f f f f f f f f f f b f b w b w b w b w b w b w b w b w b w b w b w w",
+                    #         "f f f f f f f f f b f b f b f b w b w b w b w b w b w b w b w b w w w w",
+                    #                 "f b f b f b f b f b f b f b f b f b f b f b f b w w w w w w w w w w w w"],
                 }
+                # policy = '1f1b'
+                # policy = 'GPipe'
+                policy = list(orders.keys())[(self.iter_cnt - SCHEDULE_UPDATE_START_ITER) % len(orders)]
                 schedules = [[] for _ in range(self.num_stages)]
                 for i in range(self.num_stages):
                     minibatch = {"f": 0, "b": 0, "w": 0}
-                    for mb in maunal_orders[policy][i].split():
+                    for mb in orders[policy][i].split():
                         schedules[i].append(MicroBatch(minibatch[mb], mb.upper()))
                         minibatch[mb] += 1
                 self.schedules = schedules
@@ -1388,13 +1427,57 @@ class ZeroBubbleScheduler:
         else:
             while it < len(self.schedules[self.stage]):
                 scheduled_node = self.schedules[self.stage][it]
-                # print(f"[Rank{self.stage} TODO] {scheduled_node.type}{scheduled_node.minibatch}")
+                print(f"[Rank{self.stage} TODO] {scheduled_node.type}{scheduled_node.minibatch}")
+
+                def send_and_recv(it: int, scheduled_node: MicroBatch):
+                    """
+                    Check if batched send and receive are necessary.
+                    """
+                    assert scheduled_node.type in ['F', 'B']
+                    mb = scheduled_node.minibatch
+                    diff_type = 'B' if scheduled_node.type == 'F' else 'F'
+                    comm_stage = self.stage + 1 if scheduled_node.type == 'F' else self.stage - 1
+                    for i in range(it + 1, len(self.schedules[self.stage])):
+                        # Search for next f/b node
+                        if self.schedules[self.stage][i].type == 'W':
+                            continue
+                        # Type of next f/b node is different from that of scheduled node
+                        if self.schedules[self.stage][i].type == diff_type:
+                            if scheduled_node.type == 'F':
+                                f_mb = mb
+                                b_mb = self.schedules[self.stage][i].minibatch
+                            else:
+                                f_mb = self.schedules[self.stage][i].minibatch
+                                b_mb = mb
+                            idx_b, idx_f = -1, -1
+                            for j in range(len(self.schedules[comm_stage])):
+                                node = self.schedules[comm_stage][j]
+                                if node.type == 'B' and node.minibatch == b_mb:
+                                    idx_b = j
+                                if node.type == 'F' and node.minibatch == f_mb:
+                                    idx_f = j
+                                if idx_f != -1 and idx_b != -1:
+                                    break
+                            return idx_b < idx_f if scheduled_node.type == 'F' else idx_f < idx_b
+                        # Type of next f/b node is the same as that of scheduled node
+                        else:
+                            # return False
+                            if scheduled_node.type == 'F':
+                                return False if self.stage == 0 else True
+                            else:
+                                return False if self.stage == self.num_stages - 1 else True
+                    return False
+                    
                 if scheduled_node.type == "F":
                     if self.stage != 0:
                         self.add_communication(MicroBatch(scheduled_node.minibatch, "RECV_FORWARD"), False, scheduled_node)
                     self.schedule_f(scheduled_node)
                     if self.stage != self.num_stages - 1:
-                        self.add_communication(MicroBatch(scheduled_node.minibatch, "SEND_FORWARD"), False, None)
+                        if it == len(self.schedules[self.stage]) - 1:
+                            next_is_comm = False
+                        else:
+                            next_is_comm = send_and_recv(it, scheduled_node)
+                        self.add_communication(MicroBatch(scheduled_node.minibatch, "SEND_FORWARD"), next_is_comm, None)
                 elif scheduled_node.type == "B":
                     if self.stage != self.num_stages - 1:
                         self.add_communication(MicroBatch(scheduled_node.minibatch, "RECV_BACKWARD"), False, scheduled_node)
@@ -1403,26 +1486,7 @@ class ZeroBubbleScheduler:
                         if it == len(self.schedules[self.stage]) - 1:
                             next_is_comm = False
                         else:
-                            b_mb = scheduled_node.minibatch
-                            followed_by_f = False
-                            for i in range(it + 1, len(self.schedules[self.stage])):
-                                if self.schedules[self.stage][i].type == 'F':
-                                    followed_by_f = True
-                                    f_mb = self.schedules[self.stage][i].minibatch
-                                    idx_b, idx_f = -1, -1
-                                    for j in range(len(self.schedules[self.stage - 1])):
-                                        node = self.schedules[self.stage - 1][j]
-                                        if node.type == 'F' and node.minibatch == f_mb:
-                                            idx_f = j
-                                        if node.type == 'B' and node.minibatch == b_mb:
-                                            idx_b = j
-                                        if idx_f != -1 and idx_b != -1:
-                                            break
-                                    break
-                            if not followed_by_f:
-                                next_is_comm = False
-                            else:
-                                next_is_comm = idx_f < idx_b
+                            next_is_comm = send_and_recv(it, scheduled_node)
                         self.add_communication(MicroBatch(scheduled_node.minibatch, "SEND_BACKWARD"), next_is_comm, None)
                 elif scheduled_node.type == "W":
                     non_w_pending = any([node.type != 'W' for node in self.schedules[self.stage][it + 1:]])
