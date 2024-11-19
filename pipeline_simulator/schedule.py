@@ -99,6 +99,31 @@ class PipelineSimulator(object):
             time += 1
         return time
 
+    def gen_schedule_no_comm_agg(self) -> List[List[str]]:
+        schedules = []
+        for i in range(self.num_stages):
+            stage_schedule = []
+            for j in range(len(self.history_queues[i])):
+                batch = self.history_queues[i][j]
+                batch_schedule = []
+                if isinstance(batch, ForwardBatch):
+                    if i != 0:
+                        batch_schedule.append('RECV_FORWARD')
+                    batch_schedule.append(batch.type)
+                    if i != self.num_stages - 1:
+                        batch_schedule.append('SEND_FORWARD')
+                elif isinstance(batch, BackwardInputBatch) or isinstance(batch, BackwardBatch):
+                    if i != self.num_stages - 1:
+                        batch_schedule.append('RECV_BACKWARD')
+                    batch_schedule.append(batch.type)
+                    if i != 0:
+                        batch_schedule.append('SEND_BACKWARD')
+                elif isinstance(batch, BackwardWeightBatch):
+                    batch_schedule.append(batch.type)
+                stage_schedule += batch_schedule
+            schedules.append(stage_schedule)
+        return schedules
+
     def plot(self) -> None:
         plt.figure(figsize=(10, 3))
         ax = plt.subplot(111)
@@ -126,11 +151,18 @@ def main() -> None:
     # policy = LearnedPolicy(num_stages, num_batches)
     policy = GpipePolicy()
     # policy = ZeroBubblePolicy(num_stages)
-    simulator = PipelineSimulator(num_stages, num_batches, policy, [], {(1, 2): 10, (2, 3): 10}, True)
+    comm_delay = {
+        (0, 1): 5,
+        (1, 2): 10,
+        (2, 3): 5,
+    }
+    simulator = PipelineSimulator(num_stages, num_batches, policy, [], comm_delay, True)
     simulator.simulate()
-    simulator.plot()
-    plt.show()
-    plt.savefig("test11.png")
+    schedule = simulator.gen_schedule_no_comm_agg()
+    print(schedule)
+    # simulator.plot()
+    # plt.show()
+    # plt.savefig("test11.png")
 
 
 if __name__ == '__main__':
