@@ -772,7 +772,7 @@ class ZeroBubbleScheduler:
         self.is_first_run = True
         self.optimizer = None
 
-        self.stage = torch.distributed.get_rank()
+        self.stage = parallel_state.get_pipeline_model_parallel_rank()
         self.num_stages = parallel_state.get_pipeline_model_parallel_world_size()
 
         # For network delay simulation
@@ -873,18 +873,18 @@ class ZeroBubbleScheduler:
             if raw_schedule is not None:
                 # TODO
                 orders = {
-                    '1f1b': ["f f f f       b w f b w f b w f b w f b w f b w f b w f b w f b w   b w   b w   b w",
-                               "f f f     b w f b w f b w f b w f b w f b w f b w f b w f b w f b w   b w   b w",
-                                 "f f   b w f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w   b w",
-                                   "f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w"],
-                    'GPipe': ["f f f f f f             b b b b b b w w w w w w f f f f f f             b b b b b b w w w w w w",
-                                "f f f f f f         b b b b b b w w w w w w     f f f f f f         b b b b b b w w w w w w",
-                                  "f f f f f f     b b b b b b w w w w w w         f f f f f f     b b b b b b w w w w w w",
-                                    "f f f f f f b b b b b b w w w w w w             f f f f f f b b b b b b w w w w w w"],
-                    'Manual': ["f f f f       b w f b w f b w   b w   b w   b w f f f f f f             b b b b b b w w w w w w",
-                                 "f f f     b w f b w f b w f b w   b w   b w     f f f f f f         b b b b b b w w w w w w",
-                                   "f f   b w f b w f b w f b w f b w   b w         f f f f f f     b b b b b b w w w w w w",
-                                     "f b w f b w f b w f b w f b w f b w             f f f f f f b b b b b b w w w w w w"],
+                    # '1f1b': ["f f f f       b w f b w f b w f b w f b w f b w f b w f b w f b w   b w   b w   b w",
+                    #            "f f f     b w f b w f b w f b w f b w f b w f b w f b w f b w f b w   b w   b w",
+                    #              "f f   b w f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w   b w",
+                    #                "f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w f b w"],
+                    # 'GPipe': ["f f f f f f             b b b b b b w w w w w w f f f f f f             b b b b b b w w w w w w",
+                    #             "f f f f f f         b b b b b b w w w w w w     f f f f f f         b b b b b b w w w w w w",
+                    #               "f f f f f f     b b b b b b w w w w w w         f f f f f f     b b b b b b w w w w w w",
+                    #                 "f f f f f f b b b b b b w w w w w w             f f f f f f b b b b b b w w w w w w"],
+                    # 'Manual': ["f f f f       b w f b w f b w   b w   b w   b w f f f f f f             b b b b b b w w w w w w",
+                    #              "f f f     b w f b w f b w f b w   b w   b w     f f f f f f         b b b b b b w w w w w w",
+                    #                "f f   b w f b w f b w f b w f b w   b w         f f f f f f     b b b b b b w w w w w w",
+                    #                  "f b w f b w f b w f b w f b w f b w             f f f f f f b b b b b b w w w w w w"],
                     # 'GPipe': ["f f f f f f f f f f f f             b b b b b b b b b b b b w w w w w w w w w w w w",
                     #             "f f f f f f f f f f f f         b b b b b b b b b b b b w w w w w w w w w w w w",
                     #               "f f f f f f f f f f f f     b b b b b b b b b b b b w w w w w w w w w w w w",
@@ -894,21 +894,23 @@ class ZeroBubbleScheduler:
                     #       "f f f f f b f b f b f b f b f b f b f b w b w b w b w b w w w w w w w w",
                     #         "f f f b f b f b f b f b f b f b f b f b f b w b w b w w w w w w w w w w",
                     #           "f b f b f b f b f b f b f b f b f b f b f b f b w w w w w w w w w w w w"],
-                    'ZeroBubble': [
-                        "f f f f f f f b f b w f b b w f b b w f b b w f w w w w b w b w b w b w",
-                          "f f f f f b f b f b f b w f b b w f b b w f b w f b w w b w w b w w w w",
-                            "f f f b f b f b f b f b f b w f b b w f b w f b w f b w w b w w w w w w",
-                              "f b f b f b f b f b f b f b f b w f b w f b w f b w f b w w w w w w w w"],
+                    # 'ZeroBubble': [
+                    #     "f f f f f f f b f b w f b b w f b b w f b b w f w w w w b w b w b w b w",
+                    #       "f f f f f b f b f b f b w f b b w f b b w f b w f b w w b w w b w w w w",
+                    #         "f f f b f b f b f b f b f b w f b b w f b w f b w f b w w b w w w w w w",
+                    #           "f b f b f b f b f b f b f b f b w f b w f b w f b w f b w w w w w w w w"],
+
+                    'Zb': [['F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'W'], ['RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'W', 'W', 'W', 'W'], ['RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W'], ['RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W']],
                     # Rank0 ['F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'RECV_BACKWARD', 'W', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'B', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'B', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'B', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'W', 'W', 'RECV_BACKWARD', 'W', 'W', 'B', 'RECV_BACKWARD', 'W', 'B', 'W', 'RECV_BACKWARD', 'B', 'W', 'B', 'W']
                     # Rank1 ['RECV_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'F', 'RECV_FORWARD', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'W', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'W', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'W', 'B', 'SEND_BACKWARD', 'W', 'W', 'W', 'W']
                     # Rank2 ['RECV_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'F', 'RECV_FORWARD', 'SEND_FORWARD', 'RECV_FORWARD', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_BACKWARD', 'W', 'F', 'SEND_FORWARD', 'RECV_BACKWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'RECV_BACKWARD', 'F', 'SEND_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'RECV_BACKWARD', 'W', 'B', 'SEND_BACKWARD', 'W', 'W', 'W', 'W', 'W', 'W']
                     # Rank3 ['RECV_FORWARD', 'RECV_FORWARD', 'F', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'F', 'B', 'SEND_BACKWARD', 'F', 'RECV_FORWARD', 'B', 'SEND_BACKWARD', 'W', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'F', 'B', 'SEND_BACKWARD', 'RECV_FORWARD', 'W', 'F', 'B', 'SEND_BACKWARD', 'W', 'W', 'W', 'W', 'W', 'W', 'W', 'W']
                     
-                    'For0->1Slow': [
-                        "f f f f f f f f f f f f   b w b w b w b w b w b w b w b w b w b w b w b w",
-                                "f f f f f b f b f b f b f b f b f b f b w b w b w b w b w w w w w w w w",
-                                  "f f f b f b f b f b f b f b f b f b f b f b w b w b w w w w w w w w w w",
-                                    "f b f b f b f b f b f b f b f b f b f b f b f b w w w w w w w w w w w w"],
+                    # 'For0->1Slow': [
+                    #     "f f f f f f f f f f f f   b w b w b w b w b w b w b w b w b w b w b w b w",
+                    #             "f f f f f b f b f b f b f b f b f b f b w b w b w b w b w w w w w w w w",
+                    #               "f f f b f b f b f b f b f b f b f b f b f b w b w b w w w w w w w w w w",
+                    #                 "f b f b f b f b f b f b f b f b f b f b f b f b w w w w w w w w w w w w"],
                     # # [Rank0 TODO] F8
                     # # [Rank1 TODO] F9
                     # # [Rank2 TODO] F8
@@ -928,12 +930,27 @@ class ZeroBubbleScheduler:
                 # policy = 'GPipe'
                 policy = list(orders.keys())[(self.iter_cnt - SCHEDULE_UPDATE_START_ITER) % len(orders)]
                 schedules = [[] for _ in range(self.num_stages)]
+
+
+
                 for i in range(self.num_stages):
-                    minibatch = {"f": 0, "b": 0, "w": 0}
-                    for mb in orders[policy][i].split():
-                        schedules[i].append(MicroBatch(minibatch[mb], mb.upper()))
-                        minibatch[mb] += 1
-                self.schedules = schedules
+                    minibatch = {"F": 0, "B": 0, "W": 0}
+                    # for mb in orders[policy][i].split():
+                    for mb in orders[policy][i]:
+                        # if mb == 'f' and i != 0:
+                        #     schedules[i].append(MicroBatch(minibatch[mb], 'RECV_FORWARD'))
+                        # if mb == 'b' and i != self.num_stages - 1:
+                        #     schedules[i].append(MicroBatch(minibatch[mb], 'RECV_BACKWARD'))
+                        if mb in minibatch:
+                            schedules[i].append(MicroBatch(minibatch[mb], mb.upper()))
+                            minibatch[mb] += 1
+                        else:
+                            schedules[i].append(MicroBatch(None, mb.upper()))
+                        # if mb == 'f' and i != self.num_stages - 1:
+                        #     schedules[i].append(MicroBatch(minibatch[mb], 'SEND_FORWARD'))
+                        # if mb == 'b' and i != 0:
+                        #     schedules[i].append(MicroBatch(minibatch[mb], 'SEND_BACKWARD'))
+                self.schedules = schedules[self.stage]
                 print_rank_0(f"New schedules: {policy}")
                 break
 
@@ -1403,7 +1420,8 @@ class ZeroBubbleScheduler:
             torch.cuda.nvtx.range_push(f'iter_{torch.distributed.get_rank()}_{ScheduleTimers.iter_counter}')
 
         it = self.it
-        if self.iter_cnt < SCHEDULE_UPDATE_START_ITER:
+        # if self.iter_cnt < SCHEDULE_UPDATE_START_ITER:
+        if True:
             # print(f"[Rank{self.stage}]", [n.type for n in self.schedules if n.type in AUTO_SCHEDULE_COMMUNICATION_TYPES or n.type in ["F", "B", "W"]])
             while it < len(self.schedules):
                 scheduled_node = self.schedules[it]
