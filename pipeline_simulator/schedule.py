@@ -124,6 +124,20 @@ class PipelineSimulator(object):
             schedules.append(stage_schedule)
         return schedules
 
+    def gen_schedule_graph_no_comm(self) -> List[int]:
+        graph_complete_ts = np.zeros(self.num_batches * self.num_stages * 3, dtype=int)
+        print(graph_complete_ts.shape)
+        def get_id(batch: Batch, stage: int, bid: int) -> int:
+            type_mapping = {ForwardBatch: 0, BackwardInputBatch: 1, BackwardWeightBatch: 2}
+            return type_mapping[type(batch)] * (self.num_batches * self.num_stages) + stage * self.num_batches + bid
+
+        for i in range(self.num_stages):
+            for j in range(len(self.history_queues[i])):
+                batch = self.history_queues[i][j]
+                end_time = batch.execution_begin + batch.execution_time
+                graph_complete_ts[get_id(batch, i, batch.batch_idx)] = end_time
+        return graph_complete_ts.tolist()
+
     def plot(self) -> None:
         plt.figure(figsize=(10, 3))
         ax = plt.subplot(111)
@@ -152,13 +166,13 @@ def main() -> None:
     policy = GpipePolicy()
     # policy = ZeroBubblePolicy(num_stages)
     comm_delay = {
-        (0, 1): 5,
+        (0, 1): 2,
         (1, 2): 10,
-        (2, 3): 5,
+        (2, 3): 2,
     }
     simulator = PipelineSimulator(num_stages, num_batches, policy, [], comm_delay, True)
     simulator.simulate()
-    schedule = simulator.gen_schedule_no_comm_agg()
+    schedule = simulator.gen_schedule_graph_no_comm()
     print(schedule)
     # simulator.plot()
     # plt.show()
