@@ -1,10 +1,10 @@
 import torch
 import pulp
-import batches
 from dataclasses import dataclass
 from typing import List, Set
-from schedule import PipelineSimulator
-from policy import GpipePolicy, PipeDreamPolicy, ZeroBubblePolicy
+from pipeline_simulator import batches
+from pipeline_simulator.schedule import PipelineSimulator
+from pipeline_simulator.policy import GpipePolicy, PipeDreamPolicy, ZeroBubblePolicy
 
 
 @dataclass
@@ -236,11 +236,6 @@ def ilp_results(graph: Graph, F):
                 local_order[stage][i].start_time <= local_order[stage][i - 1].completion_time:
                 (local_order[stage][i], local_order[stage][i - 1]) = (local_order[stage][i - 1], local_order[stage][i])
         # print([(x.type, x.start_time, x.completion_time) for x in local_order[stage]])
-    
-    for i in range(len(local_order)):
-        for j in range(len(local_order[i])):
-            print(local_order[i][j].type, end=' ')
-        print()
 
     local_order_with_rollback = [[] for _ in range(graph.nstages)]
     for rank in range(graph.nstages):
@@ -266,10 +261,6 @@ def ilp_results(graph: Graph, F):
                 rollback=rollback,
             ))
         assert len(rollback_comm) == 0
-        # for node in local_order_with_rollback[rank]:
-        #     print(f"{node.type}-{node.minibatch}-{int(node.rollback)}", end=', ')
-        # print()
-
     return local_order_with_rollback
 
 
@@ -279,8 +270,8 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
     batches.BACKWARD_ITIME = config.cost_b[0]
     batches.BACKWARD_WTIME = config.cost_w[0]
     batches.BACKWARD_TIME = batches.BACKWARD_ITIME + batches.BACKWARD_WTIME
-    # policy = GpipePolicy()
-    policy = ZeroBubblePolicy(nstages)
+    policy = GpipePolicy()
+    # policy = ZeroBubblePolicy(nstages)
     comm_delay = {
         (i, i + 1): config.cost_comm for i in range(nmb - 1)
     }

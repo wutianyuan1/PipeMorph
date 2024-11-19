@@ -2,9 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from typing import List, Tuple, Dict
-from batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
-from batches import FORWARD_TIME, BACKWARD_TIME, SLOW_FACTOR
-from policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy
+from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
+from pipeline_simulator.batches import FORWARD_TIME, BACKWARD_TIME, SLOW_FACTOR
+from pipeline_simulator.policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy
 
 
 class PipelineSimulator(object):
@@ -126,7 +126,6 @@ class PipelineSimulator(object):
 
     def gen_schedule_graph_no_comm(self) -> List[int]:
         graph_complete_ts = np.zeros(self.num_batches * self.num_stages * 3, dtype=int)
-        print(graph_complete_ts.shape)
         def get_id(batch: Batch, stage: int, bid: int) -> int:
             type_mapping = {ForwardBatch: 0, BackwardInputBatch: 1, BackwardWeightBatch: 2}
             return type_mapping[type(batch)] * (self.num_batches * self.num_stages) + stage * self.num_batches + bid

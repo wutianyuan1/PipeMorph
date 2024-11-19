@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from typing import List
-from batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch
+from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch
 
 
 class PipelinePolicy(ABC):
