@@ -99,6 +99,45 @@ class PipelineSimulator(object):
             time += 1
         return time
 
+    def gen_schedule_no_comm_agg(self) -> List[List[str]]:
+        schedules = []
+        for i in range(self.num_stages):
+            stage_schedule = []
+            for j in range(len(self.history_queues[i])):
+                batch = self.history_queues[i][j]
+                batch_schedule = []
+                if isinstance(batch, ForwardBatch):
+                    if i != 0:
+                        batch_schedule.append('RECV_FORWARD')
+                    batch_schedule.append(batch.type)
+                    if i != self.num_stages - 1:
+                        batch_schedule.append('SEND_FORWARD')
+                elif isinstance(batch, BackwardInputBatch) or isinstance(batch, BackwardBatch):
+                    if i != self.num_stages - 1:
+                        batch_schedule.append('RECV_BACKWARD')
+                    batch_schedule.append(batch.type)
+                    if i != 0:
+                        batch_schedule.append('SEND_BACKWARD')
+                elif isinstance(batch, BackwardWeightBatch):
+                    batch_schedule.append(batch.type)
+                stage_schedule += batch_schedule
+            schedules.append(stage_schedule)
+        return schedules
+
+    def gen_schedule_graph_no_comm(self) -> List[int]:
+        graph_complete_ts = np.zeros(self.num_batches * self.num_stages * 3, dtype=int)
+        print(graph_complete_ts.shape)
+        def get_id(batch: Batch, stage: int, bid: int) -> int:
+            type_mapping = {ForwardBatch: 0, BackwardInputBatch: 1, BackwardWeightBatch: 2}
+            return type_mapping[type(batch)] * (self.num_batches * self.num_stages) + stage * self.num_batches + bid
+
+        for i in range(self.num_stages):
+            for j in range(len(self.history_queues[i])):
+                batch = self.history_queues[i][j]
+                end_time = batch.execution_begin + batch.execution_time
+                graph_complete_ts[get_id(batch, i, batch.batch_idx)] = end_time
+        return graph_complete_ts.tolist()
+
     def plot(self) -> None:
         plt.figure(figsize=(10, 3))
         ax = plt.subplot(111)
@@ -126,11 +165,18 @@ def main() -> None:
     # policy = LearnedPolicy(num_stages, num_batches)
     policy = GpipePolicy()
     # policy = ZeroBubblePolicy(num_stages)
-    simulator = PipelineSimulator(num_stages, num_batches, policy, [], {(1, 2): 10, (2, 3): 10}, True)
+    comm_delay = {
+        (0, 1): 2,
+        (1, 2): 10,
+        (2, 3): 2,
+    }
+    simulator = PipelineSimulator(num_stages, num_batches, policy, [], comm_delay, True)
     simulator.simulate()
-    simulator.plot()
-    plt.show()
-    plt.savefig("test11.png")
+    schedule = simulator.gen_schedule_graph_no_comm()
+    print(schedule)
+    # simulator.plot()
+    # plt.show()
+    # plt.savefig("test11.png")
 
 
 if __name__ == '__main__':
