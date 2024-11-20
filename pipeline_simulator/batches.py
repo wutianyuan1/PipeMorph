@@ -3,10 +3,10 @@ from matplotlib.axes import Axes
 from abc import ABC
 
 
-FORWARD_TIME = 10
-BACKWARD_ITIME = 10
-BACKWARD_WTIME = 10
-BACKWARD_TIME = BACKWARD_ITIME + BACKWARD_WTIME
+FORWARD_TIMES = [28, 36, 36, 35]
+BACKWARD_ITIMES = [30, 36, 37, 34]
+BACKWARD_WTIMES = [22, 27, 27, 26]
+BACKWARD_TIMES = [BACKWARD_ITIMES[i] + BACKWARD_WTIMES[i] for i in range(len(BACKWARD_ITIMES))]
 SLOW_FACTOR = 1.5
 
 
@@ -36,8 +36,8 @@ class BubbleBatch(Batch):
 
 
 class ForwardBatch(Batch):
-    def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1) -> None:
-        super().__init__(batch_idx, FORWARD_TIME, fail_slow, min_begin_time)
+    def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1, stage: int = 0) -> None:
+        super().__init__(batch_idx, FORWARD_TIMES[stage], fail_slow, min_begin_time)
         self.color = '#FCCCB3'
         self.type = 'F'
 
@@ -46,28 +46,28 @@ class ForwardBatch(Batch):
 
 
 class BackwardWeightBatch(Batch):
-    def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1) -> None:
-        super().__init__(batch_idx, BACKWARD_WTIME, fail_slow, min_begin_time)
+    def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1, stage: int = 0) -> None:
+        super().__init__(batch_idx, BACKWARD_WTIMES[stage], fail_slow, min_begin_time)
         self.color = '#FBE7A3'
-        self.type = 'W'
+        self.type = 'Bw'
 
     def __repr__(self):
         return f"Bw{self.batch_idx}"
 
 
 class BackwardInputBatch(Batch):
-    def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1) -> None:
-        super().__init__(batch_idx, BACKWARD_ITIME, fail_slow, min_begin_time)
+    def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1, stage: int = 0) -> None:
+        super().__init__(batch_idx, BACKWARD_ITIMES[stage], fail_slow, min_begin_time)
         self.color = '#CBE4E4'
-        self.type = 'B'
+        self.type = 'Bi'
 
     def __repr__(self):
         return f"Bi{self.batch_idx}"
 
 
 class BackwardBatch(Batch):
-    def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1) -> None:
-        super().__init__(batch_idx, BACKWARD_TIME, fail_slow, min_begin_time)
+    def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1, stage: int = 0) -> None:
+        super().__init__(batch_idx, BACKWARD_TIMES[stage], fail_slow, min_begin_time)
         self.color = '#8FAADC'
         self.type = 'B'
 
