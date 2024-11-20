@@ -49,7 +49,7 @@ class BackwardWeightBatch(Batch):
     def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1) -> None:
         super().__init__(batch_idx, BACKWARD_WTIME, fail_slow, min_begin_time)
         self.color = '#FBE7A3'
-        self.type = 'W'
+        self.type = 'Bw'
 
     def __repr__(self):
         return f"Bw{self.batch_idx}"
@@ -59,7 +59,7 @@ class BackwardInputBatch(Batch):
     def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1) -> None:
         super().__init__(batch_idx, BACKWARD_ITIME, fail_slow, min_begin_time)
         self.color = '#CBE4E4'
-        self.type = 'B'
+        self.type = 'Bi'
 
     def __repr__(self):
         return f"Bi{self.batch_idx}"

@@ -4,7 +4,7 @@ import matplotlib.patches as patches
 from typing import List, Tuple, Dict
 from batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
 from batches import FORWARD_TIME, BACKWARD_TIME, SLOW_FACTOR
-from policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy
+from policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy, FixedPolicy
 
 
 class PipelineSimulator(object):
@@ -86,7 +86,7 @@ class PipelineSimulator(object):
                     continue
                 # If there are available tasks
                 # print(f"===Stage={i}, task={self.task_queues[i]}, finish={self.history_queues[i]}")
-                batch_pos = self.policy.pick_batch_to_run(self.task_queues[i], self.history_queues[i], time)
+                batch_pos = self.policy.pick_batch_to_run(self.task_queues[i], self.history_queues[i], time, i)
                 if batch_pos is None or time < self.task_queues[i][batch_pos].min_begin_time:
                     continue
                 batch = self.task_queues[i].pop(batch_pos)
@@ -157,25 +157,31 @@ class PipelineSimulator(object):
         ax.set_ylim(0, self.num_stages)
         ax.set_yticks(np.arange(self.num_stages) + 0.5, [f"Stage {i}" for i in range(self.num_stages - 1, -1, -1)])
 
+    def export(self, fn: str) -> None:
+        f = open(fn, 'w')
+        for i in range(self.num_stages):
+            f.write(" ".join([repr(j) for j in self.history_queues[i]]) + '\n')
+        f.close()
+
 
 def main() -> None:
-    num_stages, num_batches = 4, 8
+    num_stages, num_batches = 4, 12
     # Please comment out the unused policies
     # policy = PipeDreamPolicy(num_stages)
     # policy = LearnedPolicy(num_stages, num_batches)
-    policy = GpipePolicy()
+    # policy = GpipePolicy()
     # policy = ZeroBubblePolicy(num_stages)
+    policy = FixedPolicy(num_stages, "./originalzb.txt")
     comm_delay = {
-        (0, 1): 2,
-        (1, 2): 10,
-        (2, 3): 2,
+        (0, 1): 20,
     }
     simulator = PipelineSimulator(num_stages, num_batches, policy, [], comm_delay, True)
     simulator.simulate()
     schedule = simulator.gen_schedule_graph_no_comm()
-    print(schedule)
-    # simulator.plot()
-    # plt.show()
+    # print(schedule)
+    simulator.plot()
+    # simulator.export("./originalzb.txt")
+    plt.show()
     # plt.savefig("test11.png")
 
 
