@@ -2,9 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from typing import List, Tuple, Dict
-from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
-from pipeline_simulator.batches import FORWARD_TIME, BACKWARD_TIME, SLOW_FACTOR
-from pipeline_simulator.policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy
+from batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
+from batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTOR
+from policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy, FixedPolicy
 
 
 class PipelineSimulator(object):
@@ -23,32 +23,32 @@ class PipelineSimulator(object):
         self.policy = policy
         for i in range(self.num_batches):
             fail_slow = True if (0 in self.slow_stages) else False
-            self.task_queues[0].append(ForwardBatch(i, fail_slow, -1))
+            self.task_queues[0].append(ForwardBatch(i, fail_slow, -1, 0))
 
     def add_dependency(self, time: int, i: int, batch: Batch) -> None:
         if isinstance(batch, ForwardBatch):
             if i != self.num_stages - 1:
                 fail_slow = True if i + 1 in self.slow_stages else False
                 delay = self.comm_delay.get((i, i + 1), 0) + 1
-                self.task_queues[i + 1].append(ForwardBatch(batch.batch_idx, fail_slow, time + delay))
+                self.task_queues[i + 1].append(ForwardBatch(batch.batch_idx, fail_slow, time + delay, i + 1))
             else:
                 fail_slow = True if i in self.slow_stages else False
                 if self.split_backward:
-                    self.task_queues[i].append(BackwardInputBatch(batch.batch_idx, fail_slow, time + 1))
-                    self.task_queues[i].append(BackwardWeightBatch(batch.batch_idx, fail_slow, time + 1))
+                    self.task_queues[i].append(BackwardInputBatch(batch.batch_idx, fail_slow, time + 1, i))
+                    self.task_queues[i].append(BackwardWeightBatch(batch.batch_idx, fail_slow, time + 1, i))
                 else:
-                    self.task_queues[i].append(BackwardBatch(batch.batch_idx, fail_slow, time + 1))
+                    self.task_queues[i].append(BackwardBatch(batch.batch_idx, fail_slow, time + 1, i))
         elif isinstance(batch, BackwardBatch):
             if i != 0:
                 fail_slow = True if i - 1 in self.slow_stages else False
                 delay = self.comm_delay.get((i - 1, i), 0) + 1
-                self.task_queues[i - 1].append(BackwardBatch(batch.batch_idx, fail_slow, time + delay))
+                self.task_queues[i - 1].append(BackwardBatch(batch.batch_idx, fail_slow, time + delay, i - 1))
         elif isinstance(batch, BackwardInputBatch):
             fail_slow = True if i - 1 in self.slow_stages else False
             delay = self.comm_delay.get((i - 1, i), 0) + 1
             if i != 0:
-                self.task_queues[i - 1].append(BackwardInputBatch(batch.batch_idx, fail_slow, time + delay))
-                self.task_queues[i - 1].append(BackwardWeightBatch(batch.batch_idx, fail_slow, time + delay))
+                self.task_queues[i - 1].append(BackwardInputBatch(batch.batch_idx, fail_slow, time + delay, i - 1))
+                self.task_queues[i - 1].append(BackwardWeightBatch(batch.batch_idx, fail_slow, time + delay, i - 1))
         elif isinstance(batch, BackwardWeightBatch) or isinstance(batch, BubbleBatch):
             pass
         else:
@@ -86,7 +86,7 @@ class PipelineSimulator(object):
                     continue
                 # If there are available tasks
                 # print(f"===Stage={i}, task={self.task_queues[i]}, finish={self.history_queues[i]}")
-                batch_pos = self.policy.pick_batch_to_run(self.task_queues[i], self.history_queues[i], time)
+                batch_pos = self.policy.pick_batch_to_run(self.task_queues[i], self.history_queues[i], time, i)
                 if batch_pos is None or time < self.task_queues[i][batch_pos].min_begin_time:
                     continue
                 batch = self.task_queues[i].pop(batch_pos)
@@ -146,8 +146,9 @@ class PipelineSimulator(object):
                 batch = self.history_queues[i][j]
                 batch.plot(ax, self.num_stages - i - 1, 1)
                 maxt = max(maxt, batch.execution_begin + batch.execution_time)
-        normal_stage_total = (BACKWARD_TIME + FORWARD_TIME) * self.num_batches * (self.num_stages - len(self.slow_stages))
-        slow_stage_total = (BACKWARD_TIME + FORWARD_TIME) * SLOW_FACTOR * self.num_batches * len(self.slow_stages)
+        normal_stage_total = (sum(BACKWARD_TIMES) + sum(FORWARD_TIMES)) * self.num_batches
+        slow_stage_total = (sum(BACKWARD_TIMES) + sum(FORWARD_TIMES)) * SLOW_FACTOR * self.num_batches * len(self.slow_stages)
+        print(normal_stage_total, slow_stage_total, maxt)
         usage = (normal_stage_total + slow_stage_total) / (maxt * self.num_stages)
         rect = patches.Rectangle((0, 0), maxt, self.num_stages, linewidth=1, edgecolor='black', facecolor='#F2F2F2', zorder=0)
         ax.add_patch(rect)
@@ -156,25 +157,31 @@ class PipelineSimulator(object):
         ax.set_ylim(0, self.num_stages)
         ax.set_yticks(np.arange(self.num_stages) + 0.5, [f"Stage {i}" for i in range(self.num_stages - 1, -1, -1)])
 
+    def export(self, fn: str) -> None:
+        f = open(fn, 'w')
+        for i in range(self.num_stages):
+            f.write(" ".join([repr(j) for j in self.history_queues[i]]) + '\n')
+        f.close()
+
 
 def main() -> None:
-    num_stages, num_batches = 4, 8
+    num_stages, num_batches = 4, 12
     # Please comment out the unused policies
     # policy = PipeDreamPolicy(num_stages)
     # policy = LearnedPolicy(num_stages, num_batches)
-    policy = GpipePolicy()
+    # policy = GpipePolicy()
     # policy = ZeroBubblePolicy(num_stages)
+    policy = FixedPolicy(num_stages, "./originalzb.txt")
     comm_delay = {
-        (0, 1): 2,
-        (1, 2): 10,
-        (2, 3): 2,
+        (0, 1): 100,
     }
     simulator = PipelineSimulator(num_stages, num_batches, policy, [], comm_delay, True)
     simulator.simulate()
     schedule = simulator.gen_schedule_graph_no_comm()
-    print(schedule)
-    # simulator.plot()
-    # plt.show()
+    # print(schedule)
+    simulator.plot()
+    # simulator.export("./originalzb.txt")
+    plt.show()
     # plt.savefig("test11.png")
 
 

@@ -11,7 +11,7 @@ class PipelinePolicy(ABC):
         pass
 
     @abstractmethod
-    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0) -> int:
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0, stage: int = 0) -> int:
         pass
 
 
@@ -20,7 +20,7 @@ class GpipePolicy(PipelinePolicy):
     def __init__(self) -> None:
         super().__init__()
 
-    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0) -> int:
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0, stage: int = 0) -> int:
         priority_map = {ForwardBatch: 3, BackwardInputBatch: 2, BackwardBatch: 2, BackwardWeightBatch: 1}
         minval, minidx = (float("inf"), float("inf")), -1
         for i, batch in enumerate(task_queue):
@@ -37,7 +37,7 @@ class PipeDreamPolicy(PipelinePolicy):
         super().__init__()
         self.num_stages = num_stages
 
-    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0) -> int:
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0, stage: int = 0) -> int:
         assert finish_queue is not None, "1F1B requires a non-null finish queue"
         gpu_mem = 0
         for b in finish_queue:
@@ -67,7 +67,7 @@ class ZeroBubblePolicy(PipelinePolicy):
         super().__init__()
         self.num_stages = num_stages
 
-    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0) -> int:
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0, stage: int = 0) -> int:
         assert finish_queue is not None, "1F1B requires a non-null finish queue"
         priority_map = {ForwardBatch: 2, BackwardWeightBatch: 1, BackwardInputBatch: 3}
         minval, minidx = (float("inf"), float("inf")), -1
@@ -76,7 +76,7 @@ class ZeroBubblePolicy(PipelinePolicy):
             if cur < minval:
                 minval = cur
                 minidx = i
-       
+
         if minidx == -1 or time < task_queue[minidx].min_begin_time:
             minval = (float("inf"), float("inf"))
             # find bw fw batch to fill the bubble
@@ -88,6 +88,30 @@ class ZeroBubblePolicy(PipelinePolicy):
                         minidx = i
             
         return minidx  
+
+# ZeroBubble (ICLR'24)
+class FixedPolicy(PipelinePolicy):
+    def __init__(self, num_stages: int, file: str = 'schedule.txt') -> None:
+        super().__init__()
+        self.num_stages = num_stages
+        with open(file, 'r') as f:
+            content = f.read().split("\n")
+        self.content = []
+        for line in content:
+            self.content.append(line.split(" "))
+        self.count = {i: 0 for i in range(num_stages)}
+
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0, stage: int = 0) -> int:
+        to_exec = self.content[stage][self.count[stage]]
+        print("="*30)
+        print(f'time:{time}, stage:{stage}, count:{self.count}, to_exec={to_exec}, task_q={[(repr(i), i.min_begin_time) for i in task_queue]}')
+        idx_in_table = None
+        for idx, item in enumerate(task_queue):
+            if to_exec == repr(item) and time > item.min_begin_time - 1:
+                print(f"Execute: {item}")
+                self.count[stage] += 1
+                return idx
+        return None
 
 
 class MockAgentNet(nn.Module):
