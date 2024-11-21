@@ -1,10 +1,11 @@
 import torch
 import pulp
+import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import List, Set
 from pipeline_simulator import batches
 from pipeline_simulator.schedule import PipelineSimulator
-from pipeline_simulator.policy import GpipePolicy, PipeDreamPolicy, ZeroBubblePolicy
+from pipeline_simulator.policy import GpipePolicy, PipeDreamPolicy, ZeroBubblePolicy, FixedPolicy
 
 
 @dataclass
@@ -265,18 +266,41 @@ def ilp_results(graph: Graph, F):
 
 
 def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
+    # ==== A10 ====, Hidden=4096, MicroBSZ=1
+    # [Rank0]{'F': 28, 'B': 30, 'W': 22}
+    # [Rank2]{'F': 36, 'B': 37, 'W': 27}
+    # [Rank1]{'F': 36, 'B': 36, 'W': 27}
+    # [Rank3]{'F': 35, 'B': 34, 'W': 26}
+    # config.cost_f = [28, 36, 36, 35]
+    # config.cost_b = [30, 36, 37, 34]
+    # config.cost_w = [22, 27, 27, 26]
+
+    # ==== H800 ====, Hidden=6144, MicroBSZ=2
+    # [Rank0]{'F': 12, 'B': 13, 'W': 8}
+    # [Rank2]{'F': 16, 'B': 17, 'W': 11}
+    # [Rank1]{'F': 16, 'B': 17, 'W': 11}
+    # [Rank3]{'F': 15, 'B': 14, 'W': 10}
+    config.cost_f = [12, 16, 16, 15]
+    config.cost_b = [13, 17, 17, 14]
+    config.cost_w = [8, 11, 11, 10]
+    config.cost_comm = 0
+    print(config)
+
     graph = Graph.build_graph(nstages, nmb, config)
-    batches.FORWARD_TIME = config.cost_f[0]
-    batches.BACKWARD_ITIME = config.cost_b[0]
-    batches.BACKWARD_WTIME = config.cost_w[0]
-    batches.BACKWARD_TIME = batches.BACKWARD_ITIME + batches.BACKWARD_WTIME
-    policy = GpipePolicy()
-    # policy = ZeroBubblePolicy(nstages)
+    batches.update_times(config.cost_f, config.cost_b, config.cost_w)
+
+    # policy = PipeDreamPolicy(nstages)
+    policy = ZeroBubblePolicy(nstages)
+    # policy = FixedPolicy(nstages)
     comm_delay = {
-        (i, i + 1): config.cost_comm for i in range(nmb - 1)
+        (i, i + 1): config.cost_comm for i in range(nstages - 1)
     }
+    comm_delay[(0, 1)] = 5
     simulator = PipelineSimulator(nstages, nmb, policy, [], comm_delay, True)
-    simulator.simulate()
+    t = simulator.simulate()
+    print(f"[Simulation (ms)] {t - 1}")
+    simulator.plot()
+    plt.savefig(f"/workspace/test-varuna/zerobubble/delay_{'_'.join([str(i) for i in list(comm_delay.values())])}.png")
     complete_time = simulator.gen_schedule_graph_no_comm()
     return ilp_results(graph, complete_time)
 

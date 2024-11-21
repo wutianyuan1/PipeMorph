@@ -56,6 +56,17 @@ ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatyp
     if (!sys_inited) init();
     RETRIEVE_NCCL_FUNC(ncclSend);
     // printf("RANK%d send %ld bytes, type=%d\n", std::stoi(getenv("RANK")), count, datatype);
+    if (status->recv_count++ % CHECK_INTERVAL == 0) {
+        status->sleep_time = status->event_handler->get_sleep_time();
+        status->slow_links = status->event_handler->get_slow_links();
+    }
+    if (status->sleep_time != 0.0f && status->slow_links.size() != 0) {
+        int my_rank = std::stoi(getenv("RANK"));
+        for (const auto& [start, end] : status->slow_links) {
+            if ((my_rank == start && peer == end) || (my_rank == end && peer == start))
+                gpu_msleep<<<1, 1, 0, stream>>>(status->sleep_time * 1000.0 / 2.0, status->g_clock_rate);
+        }
+    }
     using func_t = typeof(ncclSend);
     auto ret = (*real_func)(sendbuff, count, datatype, peer, comm, stream);
     return ret;
@@ -76,7 +87,7 @@ ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t datatype,
         int my_rank = std::stoi(getenv("RANK"));
         for (const auto& [start, end] : status->slow_links) {
             if ((my_rank == start && peer == end) || (my_rank == end && peer == start))
-                gpu_msleep<<<1, 1, 0, stream>>>(status->sleep_time * 1000.0, status->g_clock_rate);
+                gpu_msleep<<<1, 1, 0, stream>>>(status->sleep_time * 1000.0 / 2.0, status->g_clock_rate);
         }
     }
     auto ret = (*real_func)(recvbuff, count, datatype, peer, comm, stream);

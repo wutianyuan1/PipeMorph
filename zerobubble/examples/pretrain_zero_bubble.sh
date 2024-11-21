@@ -37,9 +37,9 @@ WORLD_SIZE_IN_GPUS=$(( $WORLD_SIZE * $GPUS_PER_NODE ))
 if [ -z "$PIPELINE_SIZE" ]; then
   PIPELINE_SIZE=$(( $WORLD_SIZE_IN_GPUS))
   LAYERS=$(( $PIPELINE_SIZE * 4 - 2))
-  MICRO_BATCH_SIZE=1
+  MICRO_BATCH_SIZE=1   # H800: 2
   GLOBAL_BATCH_SIZE=$(( $PIPELINE_SIZE * 3 * $MICRO_BATCH_SIZE ))
-  HIDDEN_SIZE=4096
+  HIDDEN_SIZE=4096  # H800: 6144
   ATTENTION_HEADS=32
   ZERO_BUBBLE_MEM_LIMIT=$((2 * $PIPELINE_SIZE))
 fi
@@ -72,7 +72,7 @@ options=" \
   --max-position-embeddings 2048 \
   --micro-batch-size $MICRO_BATCH_SIZE \
   --global-batch-size $GLOBAL_BATCH_SIZE \
-  --train-samples 360 \
+  --train-samples 3600 \
   --lr-decay-samples 126953125 \
   --lr-warmup-samples 183105 \
   --lr 6.0e-5 \

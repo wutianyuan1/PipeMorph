@@ -1,5 +1,6 @@
 import matplotlib.patches as patches
 from matplotlib.axes import Axes
+from typing import List
 from abc import ABC
 
 
@@ -8,6 +9,16 @@ BACKWARD_ITIMES = [30, 36, 37, 34]
 BACKWARD_WTIMES = [22, 27, 27, 26]
 BACKWARD_TIMES = [BACKWARD_ITIMES[i] + BACKWARD_WTIMES[i] for i in range(len(BACKWARD_ITIMES))]
 SLOW_FACTORS = [1.5, 1.5, 1.5, 1.5]
+
+
+def update_times(f: List[int], bi: List[int], bw: List[int], slow_factors: List[int] = None) -> None:
+    global FORWARD_TIMES, BACKWARD_ITIMES, BACKWARD_WTIMES, BACKWARD_TIMES, SLOW_FACTORS
+    FORWARD_TIMES = f
+    BACKWARD_ITIMES = bi
+    BACKWARD_WTIMES = bw
+    BACKWARD_TIMES = [BACKWARD_ITIMES[i] + BACKWARD_WTIMES[i] for i in range(len(BACKWARD_ITIMES))]
+    if slow_factors is not None:
+        SLOW_FACTORS = slow_factors
 
 
 class Batch(ABC):
