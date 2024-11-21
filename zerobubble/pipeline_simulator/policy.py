@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from typing import List
-from batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch
+from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch
 
 
 class PipelinePolicy(ABC):
@@ -103,12 +103,9 @@ class FixedPolicy(PipelinePolicy):
 
     def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0, stage: int = 0) -> int:
         to_exec = self.content[stage][self.count[stage]]
-        print("="*30)
-        print(f'time:{time}, stage:{stage}, count:{self.count}, to_exec={to_exec}, task_q={[(repr(i), i.min_begin_time) for i in task_queue]}')
         idx_in_table = None
         for idx, item in enumerate(task_queue):
             if to_exec == repr(item) and time > item.min_begin_time - 1:
-                print(f"Execute: {item}")
                 self.count[stage] += 1
                 return idx
         return None

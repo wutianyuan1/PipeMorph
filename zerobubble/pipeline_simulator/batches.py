@@ -7,14 +7,14 @@ FORWARD_TIMES = [28, 36, 36, 35]
 BACKWARD_ITIMES = [30, 36, 37, 34]
 BACKWARD_WTIMES = [22, 27, 27, 26]
 BACKWARD_TIMES = [BACKWARD_ITIMES[i] + BACKWARD_WTIMES[i] for i in range(len(BACKWARD_ITIMES))]
-SLOW_FACTOR = 1.5
+SLOW_FACTORS = [1.5, 1.5, 1.5, 1.5]
 
 
 class Batch(ABC):
-    def __init__(self, batch_idx: int, execution_time: float, fail_slow: bool = False, min_begin_time: int = -1) -> None:
+    def __init__(self, batch_idx: int, execution_time: float, fail_slow: bool = False, min_begin_time: int = -1, stage: int = 0) -> None:
         super().__init__()
         self.batch_idx = batch_idx
-        self.execution_time = execution_time * SLOW_FACTOR if fail_slow else execution_time
+        self.execution_time = int(execution_time * SLOW_FACTORS[stage]) if fail_slow else execution_time
         self.execution_begin = -1
         self.color = None
         self.min_begin_time = min_begin_time
@@ -27,7 +27,7 @@ class Batch(ABC):
 
 
 class BubbleBatch(Batch):
-    def __init__(self, batch_idx: int, execution_time: float, fail_slow: bool = False, min_begin_time: int = -1) -> None:
+    def __init__(self, batch_idx: int, execution_time: float, fail_slow: bool = False, min_begin_time: int = -1, stage: int = 0) -> None:
         super().__init__(batch_idx, execution_time, fail_slow, min_begin_time)
         self.color = '#FFFFFF'
 

@@ -2,9 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from typing import List, Tuple, Dict
-from batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
-from batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTOR
-from policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy, FixedPolicy
+from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
+from pipeline_simulator.batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTORS
+from pipeline_simulator.policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy, FixedPolicy
 
 
 class PipelineSimulator(object):
@@ -126,7 +126,6 @@ class PipelineSimulator(object):
 
     def gen_schedule_graph_no_comm(self) -> List[int]:
         graph_complete_ts = np.zeros(self.num_batches * self.num_stages * 3, dtype=int)
-        print(graph_complete_ts.shape)
         def get_id(batch: Batch, stage: int, bid: int) -> int:
             type_mapping = {ForwardBatch: 0, BackwardInputBatch: 1, BackwardWeightBatch: 2}
             return type_mapping[type(batch)] * (self.num_batches * self.num_stages) + stage * self.num_batches + bid
@@ -147,9 +146,8 @@ class PipelineSimulator(object):
                 batch = self.history_queues[i][j]
                 batch.plot(ax, self.num_stages - i - 1, 1)
                 maxt = max(maxt, batch.execution_begin + batch.execution_time)
-        normal_stage_total = (sum(BACKWARD_TIMES) + sum(FORWARD_TIMES)) * self.num_batches
-        slow_stage_total = (sum(BACKWARD_TIMES) + sum(FORWARD_TIMES)) * SLOW_FACTOR * self.num_batches * len(self.slow_stages)
-        print(normal_stage_total, slow_stage_total, maxt)
+        normal_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches for i in range(self.num_stages) if i not in self.slow_stages])
+        slow_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches * SLOW_FACTORS[i] for i in range(self.num_stages) if i in self.slow_stages])
         usage = (normal_stage_total + slow_stage_total) / (maxt * self.num_stages)
         rect = patches.Rectangle((0, 0), maxt, self.num_stages, linewidth=1, edgecolor='black', facecolor='#F2F2F2', zorder=0)
         ax.add_patch(rect)
@@ -172,7 +170,7 @@ def main() -> None:
     # policy = LearnedPolicy(num_stages, num_batches)
     # policy = GpipePolicy()
     # policy = ZeroBubblePolicy(num_stages)
-    policy = FixedPolicy(num_stages, "./originalzb.txt")
+    policy = FixedPolicy(num_stages, "./pipeline_simulator/originalzb.txt")
     comm_delay = {
         (0, 1): 100,
     }
