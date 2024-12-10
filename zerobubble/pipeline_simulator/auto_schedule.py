@@ -280,9 +280,10 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
     # [Rank2]{'F': 16, 'B': 17, 'W': 11}
     # [Rank1]{'F': 16, 'B': 17, 'W': 11}
     # [Rank3]{'F': 15, 'B': 14, 'W': 10}
-    config.cost_f = [12, 16, 16, 15]
-    config.cost_b = [13, 17, 17, 14]
-    config.cost_w = [8, 11, 11, 10]
+    # config.cost_f = [12, 16, 16, 15]
+    # config.cost_b = [13, 17, 17, 14]
+    # config.cost_w = [8, 11, 11, 10]
+
     config.cost_comm = 0
     print(config)
 
@@ -300,7 +301,7 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
     t = simulator.simulate()
     print(f"[Simulation (ms)] {t - 1}")
     simulator.plot()
-    plt.savefig(f"/workspace/test-varuna/zerobubble/delay_{'_'.join([str(i) for i in list(comm_delay.values())])}.png")
+    plt.savefig(f"./delay_{'_'.join([str(i) for i in list(comm_delay.values())])}.png")
     complete_time = simulator.gen_schedule_graph_no_comm()
     return ilp_results(graph, complete_time)
 

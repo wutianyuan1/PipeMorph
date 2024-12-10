@@ -9,7 +9,13 @@ DIR=`pwd`
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 mkdir -p $DIR/logs
 
-DATASET="/tmp/zb_sample_dataset/dataset/c4_text_document"
+if [ -z $ALIBABA_CLUSTER ]; then
+  DATASET="/tmp/zb_sample_dataset/dataset/c4_text_document"
+  TOKENIZER_MODEL="/tmp/zb_sample_dataset/tokenizers/tokenizer.model"
+else
+  DATASET="/data/oss_bucket_0/zb_dataset/dataset/c4_text_document"
+  TOKENIZER_MODEL="/data/oss_bucket_0/zb_dataset/tokenizers/tokenizer.model"
+fi
 
 if [ ! -e "$DATASET"".idx" ]; then
   wget https://huggingface.co/datasets/ufotalent/zero_bubble_sample_dataset/resolve/main/zb_sample_dataset.tar.gz
@@ -21,7 +27,7 @@ if [ -z "$WORLD_SIZE" ]; then
   export WORLD_SIZE=1
   export RANK=0
   export MASTER_ADDR=localhost
-  export MASTER_PORT=10086
+  export MASTER_PORT=20086
 fi
 
 if [ -z "$GPUS_PER_NODE" ]; then
@@ -83,7 +89,7 @@ options=" \
   --eval-interval $EVAL_INTERVAL \
   --data-path ${DATASET} \
   --tokenizer-type GPTSentencePieceTokenizer \
-  --tokenizer-model /tmp/zb_sample_dataset/tokenizers/tokenizer.model \
+  --tokenizer-model $TOKENIZER_MODEL \
   --split 98,2,0 \
   --clip-grad 8.0 \
   --weight-decay 0.1 \

@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from typing import List, Tuple, Dict
 from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
-from pipeline_simulator.batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTORS
+from pipeline_simulator import batches
 from pipeline_simulator.policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy, FixedPolicy
 
 
@@ -146,8 +146,8 @@ class PipelineSimulator(object):
                 batch = self.history_queues[i][j]
                 batch.plot(ax, self.num_stages - i - 1, 1)
                 maxt = max(maxt, batch.execution_begin + batch.execution_time)
-        normal_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches for i in range(self.num_stages) if i not in self.slow_stages])
-        slow_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches * SLOW_FACTORS[i] for i in range(self.num_stages) if i in self.slow_stages])
+        normal_stage_total = sum([(batches.BACKWARD_TIMES[i] + batches.FORWARD_TIMES[i]) * self.num_batches for i in range(self.num_stages) if i not in self.slow_stages])
+        slow_stage_total = sum([(batches.BACKWARD_TIMES[i] + batches.FORWARD_TIMES[i]) * self.num_batches * batches.SLOW_FACTORS[i] for i in range(self.num_stages) if i in self.slow_stages])
         usage = (normal_stage_total + slow_stage_total) / (maxt * self.num_stages)
         rect = patches.Rectangle((0, 0), maxt, self.num_stages, linewidth=1, edgecolor='black', facecolor='#F2F2F2', zorder=0)
         ax.add_patch(rect)
