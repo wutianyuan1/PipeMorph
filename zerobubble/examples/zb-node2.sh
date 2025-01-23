@@ -18,21 +18,21 @@ fi
 
 # Running locally
 if [ -z "$WORLD_SIZE" ]; then
-  export WORLD_SIZE=1
-  export RANK=0
-  export MASTER_ADDR=localhost
+  export WORLD_SIZE=2
+  export RANK=1
+  export MASTER_ADDR=172.31.59.128
   export MASTER_PORT=10086
 fi
 
 if [ -z "$GPUS_PER_NODE" ]; then
-  GPUS_PER_NODE=$(nvidia-smi --list-gpus | wc -l)
+  GPUS_PER_NODE=2
 fi
 
 if [ -z "$EXIT_INTERVAL" ]; then
   EXIT_INTERVAL=1000
 fi
 
-WORLD_SIZE_IN_GPUS=$(( $WORLD_SIZE * $GPUS_PER_NODE ))
+WORLD_SIZE_IN_GPUS=4
 
 if [ -z "$PIPELINE_SIZE" ]; then
   PIPELINE_SIZE=$(( $WORLD_SIZE_IN_GPUS))
@@ -114,9 +114,9 @@ if [ ! -z "$ENABLE_ZERO_BUBBLE" ]; then
   --zero-bubble-pipeline-timers-start-iter $ZERO_BUBBLE_TIMER_START \
   --zero-bubble-pipeline-timers-end-iter $ZERO_BUBBLE_TIMER_END \
   --zero-bubble-max-pending-backward $ZERO_BUBBLE_MEM_LIMIT"
-  # if [ -z "$FP32" ]; then
-  #   options="$options --enable-optimizer-post-validation"
-  # fi
+  if [ -z "$FP32" ]; then
+    options="$options --enable-optimizer-post-validation"
+  fi
 fi
 
 if [ ! -z "$ENABLE_EXACTLY_NUMERIC_MATCH" ]; then

@@ -1,10 +1,21 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from dataclasses import dataclass
 from typing import List, Tuple, Dict
 from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
 from pipeline_simulator.batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTORS
-from pipeline_simulator.policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, ZeroBubblePolicy, FixedPolicy
+from pipeline_simulator.policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, OurPolicy, FixedPolicy
+
+
+@dataclass(eq=True, frozen=True)
+class ScheduledNode:
+    type: str
+    stage: int
+    minibatch: int
+    start_time: int
+    completion_time: int
+    rollback: bool = False
 
 
 class PipelineSimulator(object):
@@ -108,18 +119,18 @@ class PipelineSimulator(object):
                 batch_schedule = []
                 if isinstance(batch, ForwardBatch):
                     if i != 0:
-                        batch_schedule.append('RECV_FORWARD')
-                    batch_schedule.append(batch.type)
+                        batch_schedule.append(ScheduledNode('RECV_FORWARD', i, j, batch.execution_begin, 0))
+                    batch_schedule.append(ScheduledNode(batch.type, i, j, batch.execution_begin, batch.execution_begin + batch.execution_time))
                     if i != self.num_stages - 1:
-                        batch_schedule.append('SEND_FORWARD')
+                        batch_schedule.append(ScheduledNode('SEND_FORWARD', i, j, batch.execution_begin, 0))
                 elif isinstance(batch, BackwardInputBatch) or isinstance(batch, BackwardBatch):
                     if i != self.num_stages - 1:
-                        batch_schedule.append('RECV_BACKWARD')
-                    batch_schedule.append(batch.type)
+                        batch_schedule.append(ScheduledNode('RECV_BACKWARD', i, j, batch.execution_begin, 0))
+                    batch_schedule.append(ScheduledNode(batch.type, i, j, batch.execution_begin, batch.execution_begin + batch.execution_time))
                     if i != 0:
-                        batch_schedule.append('SEND_BACKWARD')
+                        batch_schedule.append(ScheduledNode('SEND_BACKWARD', i, j, batch.execution_begin, 0))
                 elif isinstance(batch, BackwardWeightBatch):
-                    batch_schedule.append(batch.type)
+                    batch_schedule.append(ScheduledNode(batch.type, i, j, batch.execution_begin, batch.execution_begin + batch.execution_time))
                 stage_schedule += batch_schedule
             schedules.append(stage_schedule)
         return schedules
@@ -156,11 +167,24 @@ class PipelineSimulator(object):
         ax.set_ylim(0, self.num_stages)
         ax.set_yticks(np.arange(self.num_stages) + 0.5, [f"Stage {i}" for i in range(self.num_stages - 1, -1, -1)])
 
-    def export(self, fn: str) -> None:
-        f = open(fn, 'w')
-        for i in range(self.num_stages):
-            f.write(" ".join([repr(j) for j in self.history_queues[i]]) + '\n')
-        f.close()
+    def to_text(self, fn: str = None):
+        with open(fn, 'w') as f:
+            for i in range(self.num_stages):
+                for j in range(len(self.history_queues[i])):
+                    batch = self.history_queues[i][j]
+                    f.write(f"{i}, {batch.type}, {batch.execution_begin}, {batch.execution_begin + batch.execution_time}\n")
+
+    def export(self, fn: str = None):
+        if fn is not None:
+            f = open(fn, 'w')
+            for i in range(self.num_stages):
+                f.write(" ".join([repr(j) for j in self.history_queues[i]]) + '\n')
+            f.close()
+        else:
+            schedule = ""
+            for i in range(self.num_stages):
+                schedule += " ".join([repr(j) for j in self.history_queues[i]]) + '\n'
+            return schedule
 
 
 def main() -> None:

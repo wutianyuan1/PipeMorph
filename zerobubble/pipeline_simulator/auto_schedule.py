@@ -1,10 +1,11 @@
 import torch
 import pulp
+import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import List, Set
 from pipeline_simulator import batches
 from pipeline_simulator.schedule import PipelineSimulator
-from pipeline_simulator.policy import GpipePolicy, PipeDreamPolicy, ZeroBubblePolicy
+from pipeline_simulator.policy import GpipePolicy, PipeDreamPolicy, OurPolicy, FixedPolicy
 
 
 @dataclass
@@ -114,7 +115,7 @@ class Graph:
         return g
 
 
-def ilp_results(graph: Graph, F):
+def ilp_results(graph: Graph, F, comm_delay):
     typenames = ['F', 'B', 'W']
     local_order = []
     end_time = []
@@ -139,38 +140,60 @@ def ilp_results(graph: Graph, F):
     # For each F/B, append a send/recv node. The timestamp of recv node is the same as send node to guarrentee a global order.
     comm_id = {}
     comm_id_counter = 0
-    post_validation_time = 0
-    for i in range(graph.nstages - 1, -1, -1):
-        warmup_f_count = -1
-        first_b_end = end_time[graph.get_id(1, i, 0)]
-        for j in range(graph.nmb):
-            if end_time[graph.get_id(0, i, j)] < first_b_end:
-                warmup_f_count += 1
-        assert warmup_f_count >= 0
-        pv_id = warmup_f_count
-        _id = graph.get_id(0, i, pv_id)
-        _cost = graph.get_cost(_id)
-        post_validation_time = max(post_validation_time, end_time[_id] - _cost - graph.config.cost_comm)
-        # post_validation_time = 0
-        # print(i, pv_id, post_validation_time)
-        for it in ["RECV_", "SEND_", ""]:
-            if i == 0 and it == "SEND_":
-                continue
-            if i == graph.nstages - 1 and it == "RECV_":
-                continue
-            # stage_ = i - 1 if it == "RECV_" else i
-            stage_ = i
-            local_order[stage_].append(ScheduledNode(
-                type=it + "POST_VALIDATION",
-                stage=stage_,
-                minibatch=0,
-                start_time=post_validation_time,
-                completion_time=post_validation_time,
-            ))
-            comm_id[local_order[stage_][-1]] = comm_id_counter
-            comm_id_counter += 1
     for stage in range(graph.nstages):
+        # local_order[stage] = list(sorted(local_order[stage], key=lambda x: x.start_time))
         for node in local_order[stage]:
+            # if node.type == 'F':
+            #     if node.stage != 0:
+            #         local_order[stage].append(
+            #             ScheduledNode(
+            #                 type='RECV_FORWARD',
+            #                 stage=stage,
+            #                 minibatch=node.minibatch,
+            #                 start_time=node.start_time,
+            #                 completion_time=0,
+            #             )
+            #         )
+            #         comm_id[local_order[stage][-1]] = comm_id_counter
+            #         comm_id_counter += 1
+            #     if node.stage != graph.nstages - 1:
+            #         local_order[stage].append(
+            #             ScheduledNode(
+            #                 type='SEND_FORWARD',
+            #                 stage=stage,
+            #                 minibatch=node.minibatch,
+            #                 start_time=node.completion_time,
+            #                 completion_time=0,
+            #             )
+            #         )
+            #         comm_id[local_order[stage][-1]] = comm_id_counter
+            #         comm_id_counter += 1
+            # if node.type == 'B':
+            #     if node.stage != graph.nstages - 1:
+            #         local_order[stage].append(
+            #             ScheduledNode(
+            #                 type='RECV_BACKWARD',
+            #                 stage=stage,
+            #                 minibatch=node.minibatch,
+            #                 start_time=node.start_time,
+            #                 completion_time=0,
+            #             )
+            #         )
+            #         comm_id[local_order[stage][-1]] = comm_id_counter
+            #         comm_id_counter += 1
+            #     if node.stage != 0:
+            #         local_order[stage].append(
+            #             ScheduledNode(
+            #                 type='SEND_BACKWARD',
+            #                 stage=stage,
+            #                 minibatch=node.minibatch,
+            #                 start_time=node.completion_time,
+            #                 completion_time=0,
+            #             )
+            #         )
+            #         comm_id[local_order[stage][-1]] = comm_id_counter
+            #         comm_id_counter += 1
+            
             if node.type == 'F' and node.stage != graph.nstages - 1:
                 local_order[stage].append(
                     ScheduledNode(
@@ -215,6 +238,7 @@ def ilp_results(graph: Graph, F):
                 comm_id[local_order[stage][-1]] = comm_id_counter
                 comm_id[local_order[stage - 1][-1]] = comm_id_counter
                 comm_id_counter += 1
+    
     for stage in range(graph.nstages):
         # For nodes with the same timestamp on the same stage, communication will be prioritized.
         def even_breaker(x: ScheduledNode):
@@ -223,62 +247,59 @@ def ilp_results(graph: Graph, F):
                 return comm_id_counter
             # For comm nodes, order by their unique comm id
             return comm_id[x]
-
+        # print(stage)
+        # print([node.type for node in local_order[stage]])
         local_order[stage] = list(sorted(
             local_order[stage], key=lambda x: (x.start_time, even_breaker(x))
         ))
+        # if torch.distributed.get_rank() == 3:
+        #     print([(node.type, comm_id[node] if node in comm_id else -1) for node in local_order[stage]])
         # If a recv with intersects with previous computation, reorder them so that recv
         # is executed before computation and hence can be overlapped.
-        for i in range(len(local_order[stage])):
-            if i > 0 and local_order[stage][i - 1].type in {'F', 'B', 'W'} and \
-                local_order[stage][i].type.startswith('RECV') and \
-                "POST_VALIDATION" not in local_order[stage][i].type and \
-                local_order[stage][i].start_time <= local_order[stage][i - 1].completion_time:
-                (local_order[stage][i], local_order[stage][i - 1]) = (local_order[stage][i - 1], local_order[stage][i])
-        # print([(x.type, x.start_time, x.completion_time) for x in local_order[stage]])
-
-    local_order_with_rollback = [[] for _ in range(graph.nstages)]
-    for rank in range(graph.nstages):
-        rollback_comm = set()
-        if rank > 0:
-            for node in local_order[rank - 1]:
-                if node.type == "POST_VALIDATION":
-                    break
-                if node.type == "SEND_FORWARD":
-                    rollback_comm.add(node.minibatch)
-        for node in local_order[rank]:
-            if node.type == "RECV_FORWARD" and node.minibatch in rollback_comm:
-                rollback = True
-                rollback_comm.remove(node.minibatch)
-            else:
-                rollback = False
-            local_order_with_rollback[rank].append(ScheduledNode(
-                type=node.type,
-                stage=node.stage,
-                minibatch=node.minibatch,
-                start_time=node.start_time,
-                completion_time=node.completion_time,
-                rollback=rollback,
-            ))
-        assert len(rollback_comm) == 0
-    return local_order_with_rollback
+        # for i in range(len(local_order[stage])):
+        #     if i > 0 and local_order[stage][i - 1].type in {'F', 'B', 'W'} and \
+        #         local_order[stage][i].type.startswith('RECV') and \
+        #         "POST_VALIDATION" not in local_order[stage][i].type and \
+        #         local_order[stage][i].start_time <= local_order[stage][i - 1].completion_time:
+        #         (local_order[stage][i], local_order[stage][i - 1]) = (local_order[stage][i - 1], local_order[stage][i])
+    return local_order
 
 
 def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
+    # config.cost_f = [28, 37, 37, 36]
+    # config.cost_b = [31, 37, 37, 34]
+    # config.cost_w = [21, 29, 29, 27]
+
+    config.cost_f = [35]*4
+    config.cost_b = [35]*4
+    config.cost_w = [35]*4
+    config.cost_comm = 0
+    print(config)
+    print(f"{nstages} stages, {nmb} micro-batches")
     graph = Graph.build_graph(nstages, nmb, config)
-    batches.FORWARD_TIME = config.cost_f[0]
-    batches.BACKWARD_ITIME = config.cost_b[0]
-    batches.BACKWARD_WTIME = config.cost_w[0]
-    batches.BACKWARD_TIME = batches.BACKWARD_ITIME + batches.BACKWARD_WTIME
-    policy = GpipePolicy()
-    # policy = ZeroBubblePolicy(nstages)
+    batches.update_times(config.cost_f, config.cost_b, config.cost_w)
+
+    # policy = PipeDreamPolicy(nstages)
+    # policy = GpipePolicy()
+    policy = OurPolicy(nstages)
+    # policy = FixedPolicy(nstages)
     comm_delay = {
-        (i, i + 1): config.cost_comm for i in range(nmb - 1)
+        (i, i + 1): config.cost_comm for i in range(nstages - 1)
     }
-    simulator = PipelineSimulator(nstages, nmb, policy, [], comm_delay, True)
-    simulator.simulate()
-    complete_time = simulator.gen_schedule_graph_no_comm()
-    return ilp_results(graph, complete_time)
+    slow_stages = []
+    comm_delay[(1, 2)] = 40
+    delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, comm_delay, True)
+    print(repr(type(policy)))
+    t = delay_simulator.simulate()
+    print(f"[Simulation (ms)] {t - 1}")
+    delay_simulator.plot()
+    plt.savefig(f"/workspace/test-varuna/zerobubble/simu.png")
+    delay_simulator.to_text(f"/workspace/test-varuna/zerobubble/simu.txt")
+    # simulator = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, content=delay_simulator.export()), [], {}, True)
+    # simulator.simulate()
+    # complete_time = simulator.gen_schedule_graph_no_comm()
+    complete_time = delay_simulator.gen_schedule_graph_no_comm()
+    return ilp_results(graph, complete_time, comm_delay)
 
 
 if __name__ == "__main__":
@@ -295,4 +316,5 @@ if __name__ == "__main__":
             max_mem=[mem]*p,
             print_scaling=1000 if f > 1000 else 1
         ))
-    simple_schedule(4, 4, 5, 6, 4, 2, 10)
+    # simple_schedule(4, 4, 5, 6, 4, 2, 10)
+    simple_schedule(4, 8, 10, 10, 10, None, None)

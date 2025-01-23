@@ -35,10 +35,11 @@ fi
 WORLD_SIZE_IN_GPUS=$(( $WORLD_SIZE * $GPUS_PER_NODE ))
 
 if [ -z "$PIPELINE_SIZE" ]; then
-  PIPELINE_SIZE=$(( $WORLD_SIZE_IN_GPUS))
+  # PIPELINE_SIZE=$(( $WORLD_SIZE_IN_GPUS))
+  PIPELINE_SIZE=2
   LAYERS=$(( $PIPELINE_SIZE * 4 - 2))
   MICRO_BATCH_SIZE=1
-  GLOBAL_BATCH_SIZE=$(( $PIPELINE_SIZE * 3 * $MICRO_BATCH_SIZE ))
+  GLOBAL_BATCH_SIZE=$(( $PIPELINE_SIZE * 1 * $MICRO_BATCH_SIZE ))
   HIDDEN_SIZE=4096
   ATTENTION_HEADS=32
   ZERO_BUBBLE_MEM_LIMIT=$((2 * $PIPELINE_SIZE))
@@ -114,9 +115,9 @@ if [ ! -z "$ENABLE_ZERO_BUBBLE" ]; then
   --zero-bubble-pipeline-timers-start-iter $ZERO_BUBBLE_TIMER_START \
   --zero-bubble-pipeline-timers-end-iter $ZERO_BUBBLE_TIMER_END \
   --zero-bubble-max-pending-backward $ZERO_BUBBLE_MEM_LIMIT"
-  # if [ -z "$FP32" ]; then
-  #   options="$options --enable-optimizer-post-validation"
-  # fi
+  if [ -z "$FP32" ]; then
+    options="$options --enable-optimizer-post-validation"
+  fi
 fi
 
 if [ ! -z "$ENABLE_EXACTLY_NUMERIC_MATCH" ]; then

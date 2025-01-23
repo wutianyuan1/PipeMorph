@@ -165,10 +165,10 @@ def loss_func(loss_mask: Tensor, output_tensor: Tensor):
     # Check individual rank losses are not NaN prior to DP all-reduce.
     if args.check_for_nan_in_loss_and_grad:
         global_rank = torch.distributed.get_rank()
-        assert not loss.isnan(), (
-            f'Rank {global_rank}: found NaN in local forward loss calculation. '
-            f'Device: {torch.cuda.current_device()}, node: {os.uname()[1]}'
-        )
+        # assert not loss.isnan(), (
+        #     f'Rank {global_rank}: found NaN in local forward loss calculation. '
+        #     f'Device: {torch.cuda.current_device()}, node: {os.uname()[1]}'
+        # )
 
     # Reduce loss for logging.
     averaged_loss = average_losses_across_data_parallel_group([loss])

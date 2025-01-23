@@ -1,5 +1,6 @@
 import matplotlib.patches as patches
 from matplotlib.axes import Axes
+from typing import List
 from abc import ABC
 
 
@@ -8,6 +9,16 @@ BACKWARD_ITIMES = [30, 36, 37, 34]
 BACKWARD_WTIMES = [22, 27, 27, 26]
 BACKWARD_TIMES = [BACKWARD_ITIMES[i] + BACKWARD_WTIMES[i] for i in range(len(BACKWARD_ITIMES))]
 SLOW_FACTORS = [1.5, 1.5, 1.5, 1.5]
+
+
+def update_times(f: List[int], bi: List[int], bw: List[int], slow_factors: List[int] = None) -> None:
+    global FORWARD_TIMES, BACKWARD_ITIMES, BACKWARD_WTIMES, BACKWARD_TIMES, SLOW_FACTORS
+    FORWARD_TIMES = f
+    BACKWARD_ITIMES = bi
+    BACKWARD_WTIMES = bw
+    BACKWARD_TIMES = [BACKWARD_ITIMES[i] + BACKWARD_WTIMES[i] for i in range(len(BACKWARD_ITIMES))]
+    if slow_factors is not None:
+        SLOW_FACTORS = slow_factors
 
 
 class Batch(ABC):
@@ -49,20 +60,20 @@ class BackwardWeightBatch(Batch):
     def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1, stage: int = 0) -> None:
         super().__init__(batch_idx, BACKWARD_WTIMES[stage], fail_slow, min_begin_time)
         self.color = '#FBE7A3'
-        self.type = 'Bw'
+        self.type = 'W'
 
     def __repr__(self):
-        return f"Bw{self.batch_idx}"
+        return f"W{self.batch_idx}"
 
 
 class BackwardInputBatch(Batch):
     def __init__(self, batch_idx: int, fail_slow: bool = False, min_begin_time: int = -1, stage: int = 0) -> None:
         super().__init__(batch_idx, BACKWARD_ITIMES[stage], fail_slow, min_begin_time)
         self.color = '#CBE4E4'
-        self.type = 'Bi'
+        self.type = 'B'
 
     def __repr__(self):
-        return f"Bi{self.batch_idx}"
+        return f"B{self.batch_idx}"
 
 
 class BackwardBatch(Batch):

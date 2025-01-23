@@ -1,0 +1,1 @@
+tc qdisc replace dev ens5 root netem delay 60ms

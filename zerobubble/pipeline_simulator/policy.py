@@ -62,7 +62,7 @@ class PipeDreamPolicy(PipelinePolicy):
 
 
 # ZeroBubble (ICLR'24)
-class ZeroBubblePolicy(PipelinePolicy):
+class OurPolicy(PipelinePolicy):
     def __init__(self, num_stages: int) -> None:
         super().__init__()
         self.num_stages = num_stages
@@ -91,11 +91,14 @@ class ZeroBubblePolicy(PipelinePolicy):
 
 # ZeroBubble (ICLR'24)
 class FixedPolicy(PipelinePolicy):
-    def __init__(self, num_stages: int, file: str = 'schedule.txt') -> None:
+    def __init__(self, num_stages: int, file: str = 'schedule.txt', content: str = None) -> None:
         super().__init__()
         self.num_stages = num_stages
-        with open(file, 'r') as f:
-            content = f.read().split("\n")
+        if content is None:
+            with open(f'schedule_{num_stages}.txt', 'r') as f:
+                content = f.read().split("\n")
+        else:
+            content = content.split("\n")
         self.content = []
         for line in content:
             self.content.append(line.split(" "))
