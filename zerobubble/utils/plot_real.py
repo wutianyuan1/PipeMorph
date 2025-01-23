@@ -34,10 +34,10 @@ ax.set_xlim(0, maxt)
 ax.set_ylim(0, num_stages)
 ax.set_yticks(np.arange(num_stages) + 0.5, [f"Stage {i}" for i in range(num_stages - 1, -1, -1)])
 
-## Simulation plot
+# Simulation plot
 ax = plt.subplot(212)
 maxt2 = 0
-with open(f"simu.txt", 'r') as f:
+with open("simu.txt", 'r') as f:
     for log in f.readlines():
         terms = log.strip("\n").split(', ')
         if terms[1] not in ['F', 'B', 'W']:
@@ -54,4 +54,4 @@ ax.set_title(f"S={num_stages}, B={num_microbatches}, Total Time = {maxt2}")
 ax.set_xlim(0, maxt)
 ax.set_ylim(0, num_stages)
 ax.set_yticks(np.arange(num_stages) + 0.5, [f"Stage {i}" for i in range(num_stages - 1, -1, -1)])
-plt.savefig(f"/workspace/test-varuna/zerobubble/real.png")
+plt.savefig("/workspace/test-varuna/zerobubble/real.png")

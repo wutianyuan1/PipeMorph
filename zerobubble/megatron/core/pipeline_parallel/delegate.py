@@ -1,11 +1,9 @@
 import time
-import torch
 import os
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from megatron.core.pipeline_parallel.event_timer import EventTimer
 from queue import Empty
-import random
 
 
 class CommunicationDelegate(mp.Process):
@@ -24,7 +22,7 @@ class CommunicationDelegate(mp.Process):
         os.environ['MASTER_PORT'] = str(self.dist_info['delegate_port'])
         dist.init_process_group(
             backend='nccl',
-            init_method=f"env://",
+            init_method="env://",
             rank=delegate_rank,
             world_size=delegate_world_size
         )
@@ -52,21 +50,16 @@ class CommunicationDelegate(mp.Process):
         t0 = time.time()
         timer_id = self.timer.start(t0)
         if task_type == 'send':
-            # print(f"[CommunicationDelegate {dist.get_rank()}] Sending tensor {task_id}[sum={torch.sum(tensor)}] to rank {peer_rank}")
             dist.send(tensor, dst=peer_rank)
-            # print(f"[CommunicationDelegate {dist.get_rank()}] Sent tensor {task_id} to rank {peer_rank}")
             self.completion_queue.put(task_id)
 
         elif task_type == 'recv':
-            # print(f"[CommunicationDelegate {dist.get_rank()}] Receiving tensor {task_id}[before sum={torch.sum(tensor)}] from rank {peer_rank}")
             dist.recv(tensor, src=peer_rank)
-            a = tensor.view(-1)[0].item() ## HACK: We must access this tensor to 'sync' the recv operation
-            # print(f"[CommunicationDelegate {dist.get_rank()}] Received tensor {task_id}[after sum={torch.sum(tensor)}] from rank {peer_rank}")
+            a = tensor.view(-1)[0].item()  # HACK: We must access this tensor to 'sync' the recv operation
             self.completion_queue.put(task_id)
         else:
             print(f"[CommunicationDelegate {dist.get_rank()}] Unknown task type: {task_type}")
         self.timer.end(timer_id, task_type)
-        # print(f"[CommunicationDelegate {dist.get_rank()}] {task_type}, CPU = {(time.time() - t0) * 1000.0} (ms), cudaEventElapsed = {self.timer.timer_items[timer_id].elapsed_time()} (ms)")
 
 
 def start_communication_delegate(task_queue, completion_queue, dist_info):
@@ -81,7 +74,6 @@ class DelegateManager(object):
         self.dist_info = dist_info
         self.num_delegates = ndeles
         self.port = 26010
-        # self.port = random.randint(20000, 60000)
         self.deles_f, self.tqs_f, self.cqs_f = self._create_delegate_and_queues(ndeles)
         self.deles_b, self.tqs_b, self.cqs_b = self._create_delegate_and_queues(ndeles)
         # Wait for delegate processes to initialize

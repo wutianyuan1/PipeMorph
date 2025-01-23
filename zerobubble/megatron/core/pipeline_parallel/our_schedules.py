@@ -1,16 +1,13 @@
 import contextlib
-import sys
 import os
 import time
 import uuid
 import torch
 import torch.distributed
 import torch.cuda.nvtx as nvtx
-import torch.multiprocessing as mp
 
 from typing import Iterator, List, Union
-from queue import Empty
-from megatron import core, get_args, get_num_microbatches, print_rank_0
+from megatron import core, get_num_microbatches, print_rank_0
 from megatron.core import parallel_state
 from megatron.core.utils import get_model_config, get_model_type
 from megatron.core.pipeline_parallel.schedules import (
@@ -35,6 +32,7 @@ PREALLOC_BUFFER_SIZE = 32
 
 log_file = None
 timer_sync = True
+
 
 def print_with_rank(message):
     global log_file
@@ -64,14 +62,14 @@ class OurScheduler:
         self.num_stages = parallel_state.get_pipeline_model_parallel_world_size()
         self.iter_cnt = 0
 
-        ## Fail-slow injection
+        # Fail-slow injection
         self.slow_links = [(1, 2)]
         self.repeat_times = 3
         self.comm_stream1 = torch.cuda.Stream(priority=0)
         self.comm_stream2 = torch.cuda.Stream(priority=0)
         self.timer = EventTimer()
 
-        ## Delegation
+        # Delegation
         self.taskid = 0
         self.dele_ids = set()
         self.delegate_manager = DelegateManager(
@@ -92,9 +90,6 @@ class OurScheduler:
 
     def _should_delegate(self, scheduled_node: ScheduledNode, stage: int, peer_rank: int):
         return True
-        # if (stage, peer_rank) in self.slow_links or (peer_rank, stage) in self.slow_links:
-        #     return True
-        # return False
 
     def _is_delegated(self, task_id):
         if task_id in self.dele_ids:
@@ -124,15 +119,15 @@ class OurScheduler:
 
     def add_communication(self, scheduled_node: ScheduledNode, rest_nodes: List[ScheduledNode]):
         ops_map = {
-            'RECV_FORWARD':  (torch.distributed.irecv,  get_pipeline_model_parallel_prev_rank()),
+            'RECV_FORWARD': (torch.distributed.irecv, get_pipeline_model_parallel_prev_rank()),
             'RECV_BACKWARD': (torch.distributed.irecv, get_pipeline_model_parallel_next_rank()),
-            'SEND_FORWARD':  (torch.distributed.isend, get_pipeline_model_parallel_next_rank()),
+            'SEND_FORWARD': (torch.distributed.isend, get_pipeline_model_parallel_next_rank()),
             'SEND_BACKWARD': (torch.distributed.isend, get_pipeline_model_parallel_prev_rank())
         }
         comm_func, peer_rank = ops_map[scheduled_node.type]
         buffer, pool_id = self.get_buffer(scheduled_node)
 
-        task_id = str(uuid.uuid4()) #self.taskid
+        task_id = str(uuid.uuid4())  # self.taskid
         self.taskid += 1
         if scheduled_node.type == 'RECV_FORWARD':
             self.recv_forward_id_buffer.append((pool_id, task_id))
@@ -168,13 +163,13 @@ class OurScheduler:
                 future_handle = comm_func(buffer, peer_rank, get_pipeline_model_parallel_group())
                 self.timer.end(timer_id, scheduled_node.type)
 
-            ## Add future handles to the signal list, we should wait for it when using corresponding buffers
+            # Add future handles to the signal list, we should wait for it when using corresponding buffers
             if scheduled_node.type == 'RECV_FORWARD':
                 self.rp_pool_signals[pool_id] = future_handle
             elif scheduled_node.type == 'RECV_BACKWARD':
                 self.rn_pool_signals[pool_id] = future_handle
 
-        ## De-allocate the input tensor buffers right after it is sent to the next stage
+        # De-allocate the input tensor buffers right after it is sent to the next stage
         if scheduled_node.type == 'SEND_FORWARD':
             deallocate_output_tensor(buffer, self.config.deallocate_pipeline_outputs)
 
@@ -182,7 +177,7 @@ class OurScheduler:
         if core.parallel_state.is_pipeline_first_stage():
             input_tensor = [None] * len(self.recv_tensor_shapes)
         else:
-            ## Madoka: get the tensor by id from pool when we use it, push the pool_id back after use
+            # Madoka: get the tensor by id from pool when we use it, push the pool_id back after use
             pool_id, task_id = self.recv_forward_id_buffer.pop(0)
             # Wait for the corresponding recv task to complete
             if self._is_delegated(task_id):
@@ -212,7 +207,7 @@ class OurScheduler:
             self.output_tensors.append(output_tensor)
             if core.parallel_state.is_pipeline_last_stage():
                 deallocate_output_tensor(output_tensor[0], self.config.deallocate_pipeline_outputs)
-        ## Madoka: push back the pool_id we used, and cleanup the future signal
+        # Madoka: push back the pool_id we used, and cleanup the future signal
         if not core.parallel_state.is_pipeline_first_stage():
             self.free_rp_list.append(pool_id)
             self.rp_pool_signals[pool_id] = None
@@ -226,7 +221,7 @@ class OurScheduler:
                 # Keep the original behavior when we do a dummy communication
                 output_tensor_grad = [None] * len(self.send_tensor_shapes)
             else:
-                ## Madoka: get the tensor by id from pool when we use it, push the pool_id back after use
+                # Madoka: get the tensor by id from pool when we use it, push the pool_id back after use
                 pool_id, task_id = self.recv_backward_id_buffer.pop(0)
                 if self._is_delegated(task_id):
                     # Wait for the corresponding recv task to complete
@@ -245,7 +240,7 @@ class OurScheduler:
             self.timer.end(timer_id, "B")
             self.send_backward_buffer.append(input_tensor_grad)
             WeightGradStore.flush()
-            ## Madoka: push back the pool_id we used, and cleanup the future signal
+            # Madoka: push back the pool_id we used, and cleanup the future signal
             if not core.parallel_state.is_pipeline_last_stage():
                 self.free_rn_list.append(pool_id)
                 self.rn_pool_signals[pool_id] = None
@@ -387,7 +382,7 @@ class OurScheduler:
         # Add a sync here
         torch.distributed.barrier()
         torch.cuda.synchronize()
-        ### Actual training loigc starts here!
+        # Actual training loigc starts here!
         self.disable_grad_sync()
         self.iter_cnt += 1
         # Now, only run MAXITERS iterations for testing and record the last iter's performance
@@ -444,7 +439,6 @@ class OurScheduler:
                 self.config.finalize_model_grads_func([self.model])
         return self.forward_data_store
 
-
     def __call__(self, *args, **kwargs):
         if self.is_first_run:
             self.prepare(*args, **kwargs)
@@ -469,10 +463,9 @@ def update_schedule(num_stages, num_microbatches):
             num_microbatches,
             GraphConfig(
                 mem_f=[1000], mem_b=[-500], mem_w=[-500],
-                cost_f=[1000]*4, cost_b=[1000]*4, cost_w=[1000]*4, cost_comm=0
+                cost_f=[1000] * 4, cost_b=[1000] * 4, cost_w=[1000] * 4, cost_comm=0
             )
         )
-        # print_rank_0(f"[RANK0] Schedule: {[[j.type for j in i] for i in schedule]}")
         for stage in range(num_stages):
             print_rank_0(f'Stage {stage}')
             print_rank_0([node.type for node in schedule[stage]])
@@ -484,6 +477,6 @@ def get_zero_bubble_forward_backward_func():
     assert pipeline_model_parallel_size > 1, "[OurSchedule] must enable pipeline parallelism"
     scheduler_instance = get_our_scheduler_instance()
     pp_rank = parallel_state.get_pipeline_model_parallel_rank()
-    global_schedule = update_schedule(pipeline_model_parallel_size, get_num_microbatches())    
-    forward_backward_func = lambda **kwargs: scheduler_instance(schedule=global_schedule[pp_rank] , **kwargs)
+    global_schedule = update_schedule(pipeline_model_parallel_size, get_num_microbatches())
+    forward_backward_func = lambda **kwargs: scheduler_instance(schedule=global_schedule[pp_rank], **kwargs)
     return forward_backward_func
