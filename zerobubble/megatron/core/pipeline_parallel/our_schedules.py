@@ -65,8 +65,6 @@ class OurScheduler:
         # Fail-slow injection
         self.slow_links = [(1, 2)]
         self.repeat_times = 3
-        self.comm_stream1 = torch.cuda.Stream(priority=0)
-        self.comm_stream2 = torch.cuda.Stream(priority=0)
         self.timer = EventTimer()
 
         # Delegation
@@ -157,11 +155,9 @@ class OurScheduler:
             self.dele_ids.add(task_id)
             self.timer.end(timer_id, scheduled_node.type)
         else:
-            comm_stream = self.comm_stream1 if 'SEND' in scheduled_node.type else self.comm_stream2
-            with torch.cuda.stream(comm_stream):
-                timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
-                future_handle = comm_func(buffer, peer_rank, get_pipeline_model_parallel_group())
-                self.timer.end(timer_id, scheduled_node.type)
+            timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
+            future_handle = comm_func(buffer, peer_rank, get_pipeline_model_parallel_group())
+            self.timer.end(timer_id, scheduled_node.type)
 
             # Add future handles to the signal list, we should wait for it when using corresponding buffers
             if scheduled_node.type == 'RECV_FORWARD':

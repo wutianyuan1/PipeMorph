@@ -141,59 +141,7 @@ def ilp_results(graph: Graph, F, comm_delay):
     comm_id = {}
     comm_id_counter = 0
     for stage in range(graph.nstages):
-        # local_order[stage] = list(sorted(local_order[stage], key=lambda x: x.start_time))
         for node in local_order[stage]:
-            # if node.type == 'F':
-            #     if node.stage != 0:
-            #         local_order[stage].append(
-            #             ScheduledNode(
-            #                 type='RECV_FORWARD',
-            #                 stage=stage,
-            #                 minibatch=node.minibatch,
-            #                 start_time=node.start_time,
-            #                 completion_time=0,
-            #             )
-            #         )
-            #         comm_id[local_order[stage][-1]] = comm_id_counter
-            #         comm_id_counter += 1
-            #     if node.stage != graph.nstages - 1:
-            #         local_order[stage].append(
-            #             ScheduledNode(
-            #                 type='SEND_FORWARD',
-            #                 stage=stage,
-            #                 minibatch=node.minibatch,
-            #                 start_time=node.completion_time,
-            #                 completion_time=0,
-            #             )
-            #         )
-            #         comm_id[local_order[stage][-1]] = comm_id_counter
-            #         comm_id_counter += 1
-            # if node.type == 'B':
-            #     if node.stage != graph.nstages - 1:
-            #         local_order[stage].append(
-            #             ScheduledNode(
-            #                 type='RECV_BACKWARD',
-            #                 stage=stage,
-            #                 minibatch=node.minibatch,
-            #                 start_time=node.start_time,
-            #                 completion_time=0,
-            #             )
-            #         )
-            #         comm_id[local_order[stage][-1]] = comm_id_counter
-            #         comm_id_counter += 1
-            #     if node.stage != 0:
-            #         local_order[stage].append(
-            #             ScheduledNode(
-            #                 type='SEND_BACKWARD',
-            #                 stage=stage,
-            #                 minibatch=node.minibatch,
-            #                 start_time=node.completion_time,
-            #                 completion_time=0,
-            #             )
-            #         )
-            #         comm_id[local_order[stage][-1]] = comm_id_counter
-            #         comm_id_counter += 1
-            
             if node.type == 'F' and node.stage != graph.nstages - 1:
                 local_order[stage].append(
                     ScheduledNode(
@@ -247,13 +195,9 @@ def ilp_results(graph: Graph, F, comm_delay):
                 return comm_id_counter
             # For comm nodes, order by their unique comm id
             return comm_id[x]
-        # print(stage)
-        # print([node.type for node in local_order[stage]])
         local_order[stage] = list(sorted(
             local_order[stage], key=lambda x: (x.start_time, even_breaker(x))
         ))
-        # if torch.distributed.get_rank() == 3:
-        #     print([(node.type, comm_id[node] if node in comm_id else -1) for node in local_order[stage]])
         # If a recv with intersects with previous computation, reorder them so that recv
         # is executed before computation and hence can be overlapped.
         # for i in range(len(local_order[stage])):
@@ -287,23 +231,19 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
         (i, i + 1): config.cost_comm for i in range(nstages - 1)
     }
     slow_stages = []
-    comm_delay[(1, 2)] = 40
+    # comm_delay[(1, 2)] = 40
     delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, comm_delay, True)
     print(repr(type(policy)))
     t = delay_simulator.simulate()
     print(f"[Simulation (ms)] {t - 1}")
-    delay_simulator.plot()
-    plt.savefig(f"/workspace/test-varuna/zerobubble/simu.png")
     delay_simulator.to_text(f"/workspace/test-varuna/zerobubble/simu.txt")
     # simulator = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, content=delay_simulator.export()), [], {}, True)
     # simulator.simulate()
-    # complete_time = simulator.gen_schedule_graph_no_comm()
     complete_time = delay_simulator.gen_schedule_graph_no_comm()
     return ilp_results(graph, complete_time, comm_delay)
 
 
 if __name__ == "__main__":
-    # auto_schedule(4, 12, GraphConfig(cost_f=5, cost_b=6, cost_w=4, cost_comm=0, max_mem=10))
     def simple_schedule(p,m,f,b,w,c,mem):
         return auto_schedule(p, m, GraphConfig(
             cost_f=[f]*p,
@@ -316,5 +256,4 @@ if __name__ == "__main__":
             max_mem=[mem]*p,
             print_scaling=1000 if f > 1000 else 1
         ))
-    # simple_schedule(4, 4, 5, 6, 4, 2, 10)
     simple_schedule(4, 8, 10, 10, 10, None, None)
