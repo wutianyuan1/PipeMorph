@@ -7,3 +7,6 @@ build/
 *.tar.gz
 *.so
 *.a
+*.nsys-rep
+*.tar
+*.tar.gz.1
