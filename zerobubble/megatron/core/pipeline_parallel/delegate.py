@@ -17,8 +17,9 @@ class CommunicationDelegate(mp.Process):
     def run(self):
         delegate_rank = self.dist_info['delegate_rank']
         delegate_world_size = self.dist_info['delegate_world_size']
+        master_addr = os.environ['MASTER_ADDR']
         os.environ = {}
-        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_ADDR'] = master_addr
         os.environ['MASTER_PORT'] = str(self.dist_info['delegate_port'])
         dist.init_process_group(
             backend='nccl',
