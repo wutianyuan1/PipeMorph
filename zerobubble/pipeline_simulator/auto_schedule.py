@@ -200,12 +200,12 @@ def ilp_results(graph: Graph, F, comm_delay):
         ))
         # If a recv with intersects with previous computation, reorder them so that recv
         # is executed before computation and hence can be overlapped.
-        # for i in range(len(local_order[stage])):
-        #     if i > 0 and local_order[stage][i - 1].type in {'F', 'B', 'W'} and \
-        #         local_order[stage][i].type.startswith('RECV') and \
-        #         "POST_VALIDATION" not in local_order[stage][i].type and \
-        #         local_order[stage][i].start_time <= local_order[stage][i - 1].completion_time:
-        #         (local_order[stage][i], local_order[stage][i - 1]) = (local_order[stage][i - 1], local_order[stage][i])
+        for i in range(len(local_order[stage])):
+            if i > 0 and local_order[stage][i - 1].type in {'F', 'B', 'W'} and \
+                local_order[stage][i].type.startswith('RECV') and \
+                "POST_VALIDATION" not in local_order[stage][i].type and \
+                local_order[stage][i].start_time <= local_order[stage][i - 1].completion_time:
+                (local_order[stage][i], local_order[stage][i - 1]) = (local_order[stage][i - 1], local_order[stage][i])
     return local_order
 
 
@@ -231,12 +231,12 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
         (i, i + 1): config.cost_comm for i in range(nstages - 1)
     }
     slow_stages = []
-    # comm_delay[(1, 2)] = 40
+    # comm_delay[(0, 1)] = 60
     delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, comm_delay, True)
     print(repr(type(policy)))
     t = delay_simulator.simulate()
     print(f"[Simulation (ms)] {t - 1}")
-    delay_simulator.to_text(f"/workspace/test-varuna/zerobubble/simu.txt")
+    delay_simulator.to_text(f"./simu.txt")
     # simulator = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, content=delay_simulator.export()), [], {}, True)
     # simulator.simulate()
     complete_time = delay_simulator.gen_schedule_graph_no_comm()

@@ -9,18 +9,18 @@ DIR=`pwd`
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 mkdir -p $DIR/logs
 
-DATASET="/tmp/zb_sample_dataset/dataset/c4_text_document"
+DATASET="/root/workspace/test-varuna/zerobubble/zb_sample_dataset/dataset/c4_text_document"
 
 if [ ! -e "$DATASET"".idx" ]; then
   wget https://huggingface.co/datasets/ufotalent/zero_bubble_sample_dataset/resolve/main/zb_sample_dataset.tar.gz
-  tar -xvf zb_sample_dataset.tar.gz -C /tmp
+  tar -xvf zb_sample_dataset.tar.gz -C /root/workspace/test-varuna/zerobubble/
 fi
 
 # Running locally
 if [ -z "$WORLD_SIZE" ]; then
-  export WORLD_SIZE=2
+  export WORLD_SIZE=4
   export RANK=$NODERANK
-  export MASTER_ADDR=172.31.59.128
+  export MASTER_ADDR=172.24.82.221
   export MASTER_PORT=10086
 fi
 
@@ -83,7 +83,7 @@ options=" \
   --eval-interval $EVAL_INTERVAL \
   --data-path ${DATASET} \
   --tokenizer-type GPTSentencePieceTokenizer \
-  --tokenizer-model /tmp/zb_sample_dataset/tokenizers/tokenizer.model \
+  --tokenizer-model /root/workspace/test-varuna/zerobubble/zb_sample_dataset/tokenizers/tokenizer.model \
   --split 98,2,0 \
   --clip-grad 8.0 \
   --weight-decay 0.1 \
@@ -129,7 +129,7 @@ if [ ! -z "$INTERLEAVED_1F1B" ]; then
   options="$options --num-layers-per-virtual-pipeline-stage 1"
 fi
 
-run_cmd="torchrun --nnodes $WORLD_SIZE \
+run_cmd="/root/miniconda3/bin/torchrun --nnodes $WORLD_SIZE \
   --node_rank $RANK \
   --master_addr $MASTER_ADDR \
   --master_port $MASTER_PORT \

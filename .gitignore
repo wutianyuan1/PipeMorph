@@ -10,3 +10,5 @@ build/
 *.nsys-rep
 *.tar
 *.tar.gz.1
+backup/
+zerobubble/zb_sample_dataset/

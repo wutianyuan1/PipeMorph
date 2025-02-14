@@ -1,7 +1,6 @@
 import contextlib
 import os
 import time
-import uuid
 import torch
 import torch.distributed
 import torch.cuda.nvtx as nvtx
@@ -16,24 +15,17 @@ from megatron.core.pipeline_parallel.schedules import (
     backward_step,
     get_tensor_shapes,
 )
-from megatron.core.parallel_state import (
-    get_pipeline_model_parallel_group,
-    get_pipeline_model_parallel_next_rank,
-    get_pipeline_model_parallel_prev_rank,
-)
 from megatron.core.weight_grad_store import WeightGradStore
 from pipeline_simulator.auto_schedule import ScheduledNode, auto_schedule, GraphConfig
 from megatron.core.pipeline_parallel.event_timer import EventTimer
-from megatron.core.pipeline_parallel.delegate import DelegateManager
+from megatron.core.pipeline_parallel.cpu_delegate import DelegateManager
 
 
 AUTO_SCHEDULE_COMMUNICATION_TYPES = {'RECV_FORWARD', 'RECV_BACKWARD', 'SEND_FORWARD', 'SEND_BACKWARD'}
 PREALLOC_BUFFER_SIZE = 32
 
 log_file = None
-timer_sync = False
-# cpu_comm = False
-cpu_comm = True
+timer_sync = True
 
 
 def print_with_rank(message):
@@ -69,131 +61,28 @@ class OurScheduler:
         self.repeat_times = 3
         self.timer = EventTimer()
         self.comp_stream = torch.cuda.Stream(priority=-100)
-        # self.comm_streams = [torch.cuda.Stream(priority=-1) for _ in range(4)]
-        # self.i = 0
-
-        # Delegation
-        self.taskid = 0
-        self.dele_ids = set()
-        self.delegate_manager = DelegateManager(
-            {'delegate_rank': self.stage, 'delegate_world_size': self.num_stages}, ndeles=2)
 
     def _free_buffers(self):
         self.input_tensors = []
         self.output_tensors = []
-        self.send_forward_buffer = []
-        self.recv_forward_id_buffer = []
-        self.send_backward_buffer = []
-        self.recv_backward_id_buffer = []
         self.forward_data_store = []
 
     def _reset(self):
         self._free_buffers()
-        self.dele_ids = set()
 
     def _should_delegate(self, scheduled_node: ScheduledNode, stage: int, peer_rank: int):
         return True
-        return False
 
     def _is_delegated(self, task_id):
-        if task_id in self.dele_ids:
-            return True
-        return False
+        return True
 
-    def get_buffer(self, scheduled_node: ScheduledNode):
-        def get_free_pool_id(free_id_list):
-            # Current policy: pop the first item
-            if len(free_id_list) == 0:
-                print_with_rank("No free pool slots!")
-                raise RuntimeError("No free pool slots!")
-            return free_id_list.pop(0)
-
-        if scheduled_node.type == 'RECV_FORWARD':
-            pool_id = get_free_pool_id(self.free_rp_list)
-            return self.rp_tensor_pool[pool_id], pool_id
-        elif scheduled_node.type == 'RECV_BACKWARD':
-            pool_id = get_free_pool_id(self.free_rn_list)
-            return self.rn_tensor_pool[pool_id], pool_id
-        elif scheduled_node.type == 'SEND_FORWARD':
-            return self.send_forward_buffer.pop(0)[0], -1
-        elif scheduled_node.type == 'SEND_BACKWARD':
-            return self.send_backward_buffer.pop(0)[0], -1
-        else:
-            print_with_rank(f"Unsupported scheduled node: {scheduled_node}")
-
-    def add_communication(self, scheduled_node: ScheduledNode, rest_nodes: List[ScheduledNode]):
-        ops_map = {
-            'RECV_FORWARD': (torch.distributed.irecv, get_pipeline_model_parallel_prev_rank()),
-            'RECV_BACKWARD': (torch.distributed.irecv, get_pipeline_model_parallel_next_rank()),
-            'SEND_FORWARD': (torch.distributed.isend, get_pipeline_model_parallel_next_rank()),
-            'SEND_BACKWARD': (torch.distributed.isend, get_pipeline_model_parallel_prev_rank())
-        }
-        comm_func, peer_rank = ops_map[scheduled_node.type]
-        buffer, pool_id = self.get_buffer(scheduled_node)
-
-        task_id = str(uuid.uuid4())  # self.taskid
-        self.taskid += 1
-        if scheduled_node.type == 'RECV_FORWARD':
-            self.recv_forward_id_buffer.append((pool_id, task_id))
-        elif scheduled_node.type == 'RECV_BACKWARD':
-            self.recv_backward_id_buffer.append((pool_id, task_id))
-
-        if self._should_delegate(scheduled_node, self.stage, peer_rank):
-            timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
-            if 'FORWARD' in scheduled_node.type:
-                self.delegate_manager.schedule_f(
-                    {
-                        'type': 'recv' if scheduled_node.type.startswith('RECV') else 'send',
-                        'buffer': buffer.detach(),
-                        'peer_rank': peer_rank,
-                        'task_id': task_id
-                    }
-                )
-            else:
-                self.delegate_manager.schedule_b(
-                    {
-                        'type': 'recv' if scheduled_node.type.startswith('RECV') else 'send',
-                        'buffer': buffer.detach(),
-                        'peer_rank': peer_rank,
-                        'task_id': task_id
-                    }
-                )
-            self.dele_ids.add(task_id)
-            self.timer.end(timer_id, scheduled_node.type)
-        else:
-            # with torch.cuda.stream(self.comm_streams[self.i % 4]):
-            #     self.i += 1
-            timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
-            future_handle = comm_func(buffer, peer_rank, get_pipeline_model_parallel_group())
-            # future_handle = comm_func(buffer.cpu() if cpu_comm else buffer, peer_rank, get_pipeline_model_parallel_group())
-            self.timer.end(timer_id, scheduled_node.type)
-
-            # Add future handles to the signal list, we should wait for it when using corresponding buffers
-            if scheduled_node.type == 'RECV_FORWARD':
-                self.rp_pool_signals[pool_id] = future_handle
-            elif scheduled_node.type == 'RECV_BACKWARD':
-                self.rn_pool_signals[pool_id] = future_handle
-
-        # De-allocate the input tensor buffers right after it is sent to the next stage
-        if scheduled_node.type == 'SEND_FORWARD':
-            deallocate_output_tensor(buffer, self.config.deallocate_pipeline_outputs)
-
-    def schedule_f(self, scheduled_node: ScheduledNode):
+    def schedule_f(self, scheduled_node: ScheduledNode, op_id: int):
+        delegate_id = op_id % self.delegate_manager.num_delegates
         if core.parallel_state.is_pipeline_first_stage():
             input_tensor = [None] * len(self.recv_tensor_shapes)
         else:
-            # Madoka: get the tensor by id from pool when we use it, push the pool_id back after use
-            pool_id, task_id = self.recv_forward_id_buffer.pop(0)
-            # Wait for the corresponding recv task to complete
-            if self._is_delegated(task_id):
-                self.delegate_manager.wait_f(task_id)
-            else:
-                # Wait for data transfer ready
-                assert self.rp_pool_signals[pool_id] is not None
-                self.rp_pool_signals[pool_id].wait()
-            # input_tensor = [self.rp_tensor_pool[pool_id]]
-            input_tensor = [self.rp_tensor_pool[pool_id].cuda() if cpu_comm else self.rp_tensor_pool[pool_id]]
-            assert torch.sum(self.rp_tensor_pool[pool_id]) != 111.111
+            input_tensor = [self.delegate_manager.queues[f'recv_forward_task_{delegate_id}'].get().cuda().requires_grad_()]
+            assert torch.sum(input_tensor[0]) != 111.111
         with torch.cuda.stream(self.comp_stream):
             timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
             with nvtx.range(scheduled_node.type):
@@ -210,42 +99,25 @@ class OurScheduler:
                 )
             self.timer.end(timer_id, "F")
         if not core.parallel_state.is_pipeline_last_stage():
-            # self.send_forward_buffer.append(output_tensor)
-            self.send_forward_buffer.append([output_tensor[0].cpu()] if cpu_comm else output_tensor)
+            self.delegate_manager.queues[f'send_forward_task_{delegate_id}'].put(output_tensor[0].detach().cpu())
         if not self.forward_only:
             self.input_tensors.append(input_tensor)
             self.output_tensors.append(output_tensor)
-            if core.parallel_state.is_pipeline_last_stage():
-                deallocate_output_tensor(output_tensor[0], self.config.deallocate_pipeline_outputs)
-        # Madoka: push back the pool_id we used, and cleanup the future signal
-        if not core.parallel_state.is_pipeline_first_stage():
-            self.free_rp_list.append(pool_id)
-            self.rp_pool_signals[pool_id] = None
+        deallocate_output_tensor(output_tensor[0], self.config.deallocate_pipeline_outputs)
 
-    def schedule_b(self, scheduled_node: ScheduledNode):
+    def schedule_b(self, scheduled_node: ScheduledNode, op_id: int):
+        delegate_id = op_id % self.delegate_manager.num_delegates
         if not self.forward_only:
             input_tensor = self.input_tensors.pop(0)
             output_tensor = self.output_tensors.pop(0)
-
-            if cpu_comm:
-                deallocate_output_tensor(output_tensor[0], self.config.deallocate_pipeline_outputs)
 
             if core.parallel_state.is_pipeline_last_stage():
                 # Keep the original behavior when we do a dummy communication
                 output_tensor_grad = [None] * len(self.send_tensor_shapes)
             else:
-                # Madoka: get the tensor by id from pool when we use it, push the pool_id back after use
-                pool_id, task_id = self.recv_backward_id_buffer.pop(0)
-                if self._is_delegated(task_id):
-                    # Wait for the corresponding recv task to complete
-                    self.delegate_manager.wait_b(task_id)
-                else:
-                    # Wait for data transfer ready
-                    assert self.rn_pool_signals[pool_id] is not None
-                    self.rn_pool_signals[pool_id].wait()
-                assert torch.sum(self.rn_tensor_pool[pool_id]) != 111.111
-                # output_tensor_grad = [self.rn_tensor_pool[pool_id]]
-                output_tensor_grad = [self.rn_tensor_pool[pool_id].cuda() if cpu_comm else self.rn_tensor_pool[pool_id]]
+                x = self.delegate_manager.queues[f'recv_backward_task_{delegate_id}'].get()
+                output_tensor_grad = [x.cuda().requires_grad_()]
+                assert torch.sum(output_tensor_grad[0]) != 111.111
 
             with torch.cuda.stream(self.comp_stream):
                 timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
@@ -255,13 +127,9 @@ class OurScheduler:
                         self.config
                     )
                 self.timer.end(timer_id, "B")
-            # self.send_backward_buffer.append(input_tensor_grad)
-            self.send_backward_buffer.append([input_tensor_grad[0].cpu()] if cpu_comm and input_tensor_grad[0] is not None else input_tensor_grad)
+            if not parallel_state.is_pipeline_first_stage():
+                self.delegate_manager.queues[f'send_backward_task_{delegate_id}'].put(input_tensor_grad[0].detach().cpu())
             WeightGradStore.flush()
-            # Madoka: push back the pool_id we used, and cleanup the future signal
-            if not core.parallel_state.is_pipeline_last_stage():
-                self.free_rn_list.append(pool_id)
-                self.rn_pool_signals[pool_id] = None
 
     def schedule_w(self, scheduled_node: ScheduledNode, non_w_pending: bool):
         with torch.cuda.stream(self.comp_stream):
@@ -281,44 +149,6 @@ class OurScheduler:
         if self.no_sync_context is not None:
             self.no_sync_context.__exit__(None, None, None)
             self.no_sync_context = None
-
-    def _pre_alloc_buffers(self):
-        # Stacked tensor
-        if self.stage in [p for (p, n) in self.slow_links]:
-            shapes = [self.repeat_times] + list(self.send_tensor_shapes[0])
-        else:
-            shapes = self.send_tensor_shapes[0]
-        rn_tensors = [
-            torch.zeros(
-                self.send_tensor_shapes[0],
-                # shapes,
-                requires_grad=True,
-                # device=torch.cuda.current_device(),
-                device='cpu' if cpu_comm else torch.cuda.current_device(),
-                dtype=self.config.pipeline_dtype,
-            ) for _ in range(PREALLOC_BUFFER_SIZE)
-        ]
-        # Stacked tensor
-        if self.stage in [n for (p, n) in self.slow_links]:
-            shapes = [self.repeat_times] + list(self.send_tensor_shapes[0])
-        else:
-            shapes = self.send_tensor_shapes[0]
-        rp_tensors = [
-            torch.zeros(
-                self.send_tensor_shapes[0],
-                # shapes,
-                requires_grad=True,
-                # device=torch.cuda.current_device(),
-                device='cpu' if cpu_comm else torch.cuda.current_device(),
-                dtype=self.config.pipeline_dtype,
-            ) for _ in range(PREALLOC_BUFFER_SIZE)
-        ]
-        self.rn_tensor_pool = rn_tensors
-        self.rp_tensor_pool = rp_tensors
-        self.rn_pool_signals = [None for _ in range(PREALLOC_BUFFER_SIZE)]
-        self.rp_pool_signals = [None for _ in range(PREALLOC_BUFFER_SIZE)]
-        self.free_rn_list = list(range(PREALLOC_BUFFER_SIZE))
-        self.free_rp_list = list(range(PREALLOC_BUFFER_SIZE))
 
     def prepare(
         self,
@@ -397,7 +227,13 @@ class OurScheduler:
         self.collect_non_loss_data = collect_non_loss_data
         self.forward_only = forward_only
         self._reset()
-        self._pre_alloc_buffers()
+
+        my_rank = self.stage
+        ip_list = ["172.24.82.221", "172.24.82.222", "172.24.82.223", "172.24.82.224"]
+        my_ip = ip_list[my_rank]
+        prev_ip = ip_list[my_rank - 1] if my_rank != 0 else None
+        next_ip = ip_list[my_rank + 1] if my_rank != self.num_stages - 1 else None
+        self.delegate_manager = DelegateManager(my_rank, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=3)
 
     def run(self):
         # Add a sync here
@@ -411,6 +247,7 @@ class OurScheduler:
         global log_file
         if self.iter_cnt == MAXITERS:
             self.delegate_manager.terminate()
+            torch.distributed.destroy_process_group()
             exit(0)
         log_file = open(f"./GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}.log", 'w') if self.iter_cnt == MAXITERS - 1 else open(os.devnull, 'w')
 
@@ -419,20 +256,23 @@ class OurScheduler:
         torch.distributed.all_reduce(ts, op=torch.distributed.ReduceOp.MAX)
         self.t_start = ts.item()
 
+        fs = [i.type for i in self.schedules if i.type == 'F']
+        self.delegate_manager.start_iter(len(fs))
+
         # Run this schedule.
         it = 0
+        fid, bid = 0, 0
         while it < len(self.schedules):
             scheduled_node = self.schedules[it]
             it += 1
             if 'POST' in scheduled_node.type:
                 continue
-            if scheduled_node.type in AUTO_SCHEDULE_COMMUNICATION_TYPES:
-                with nvtx.range(scheduled_node.type):
-                    self.add_communication(scheduled_node, self.schedules[it:])
-            elif scheduled_node.type == 'F':
-                    self.schedule_f(scheduled_node)
+            if scheduled_node.type == 'F':
+                self.schedule_f(scheduled_node, fid)
+                fid += 1
             elif scheduled_node.type == 'B':
-                    self.schedule_b(scheduled_node)
+                self.schedule_b(scheduled_node, bid)
+                bid += 1
             elif scheduled_node.type == 'W':
                 with nvtx.range(scheduled_node.type):
                     non_w_pending = any([node.type != 'W' for node in self.schedules[it:]])
@@ -498,5 +338,8 @@ def get_zero_bubble_forward_backward_func():
     scheduler_instance = get_our_scheduler_instance()
     pp_rank = parallel_state.get_pipeline_model_parallel_rank()
     global_schedule = update_schedule(pipeline_model_parallel_size, get_num_microbatches())
-    forward_backward_func = lambda **kwargs: scheduler_instance(schedule=global_schedule[pp_rank], **kwargs)
+
+    def forward_backward_func(**kwargs):
+        return scheduler_instance(schedule=global_schedule[pp_rank], **kwargs)
+
     return forward_backward_func
