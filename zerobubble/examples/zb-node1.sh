@@ -114,9 +114,6 @@ if [ ! -z "$ENABLE_ZERO_BUBBLE" ]; then
   --zero-bubble-pipeline-timers-start-iter $ZERO_BUBBLE_TIMER_START \
   --zero-bubble-pipeline-timers-end-iter $ZERO_BUBBLE_TIMER_END \
   --zero-bubble-max-pending-backward $ZERO_BUBBLE_MEM_LIMIT"
-  if [ -z "$FP32" ]; then
-    options="$options --enable-optimizer-post-validation"
-  fi
 fi
 
 if [ ! -z "$ENABLE_EXACTLY_NUMERIC_MATCH" ]; then

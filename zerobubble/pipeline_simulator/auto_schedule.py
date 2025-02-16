@@ -210,9 +210,9 @@ def ilp_results(graph: Graph, F, comm_delay):
 
 
 def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
-    # config.cost_f = [28, 37, 37, 36]
-    # config.cost_b = [31, 37, 37, 34]
-    # config.cost_w = [21, 29, 29, 27]
+    # config.cost_f = [28, 32, 32, 31]
+    # config.cost_b = [32, 40, 45, 38]
+    # config.cost_w = [15, 21, 29, 24]
 
     config.cost_f = [35]*4
     config.cost_b = [35]*4
@@ -231,14 +231,18 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
         (i, i + 1): config.cost_comm for i in range(nstages - 1)
     }
     slow_stages = []
-    # comm_delay[(0, 1)] = 60
-    delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, comm_delay, True)
+    comm_delay[(0, 1)] = 160
+    comm_delay[(1, 2)] = 185
+    re_schedule = True
+    delay = comm_delay if re_schedule else {(i, i + 1): 0 for i in range(nstages - 1)}
+    delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, delay, True)
     print(repr(type(policy)))
-    t = delay_simulator.simulate()
+    delay_simulator.simulate()
+    schedule = delay_simulator.export()
+    simu_4_plot = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, None, schedule), slow_stages, comm_delay, True)
+    t = simu_4_plot.simulate()
     print(f"[Simulation (ms)] {t - 1}")
-    delay_simulator.to_text(f"./simu.txt")
-    # simulator = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, content=delay_simulator.export()), [], {}, True)
-    # simulator.simulate()
+    simu_4_plot.to_text(f"./simu.txt")
     complete_time = delay_simulator.gen_schedule_graph_no_comm()
     return ilp_results(graph, complete_time, comm_delay)
 

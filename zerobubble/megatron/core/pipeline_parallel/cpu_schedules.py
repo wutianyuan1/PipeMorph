@@ -233,7 +233,7 @@ class OurScheduler:
         my_ip = ip_list[my_rank]
         prev_ip = ip_list[my_rank - 1] if my_rank != 0 else None
         next_ip = ip_list[my_rank + 1] if my_rank != self.num_stages - 1 else None
-        self.delegate_manager = DelegateManager(my_rank, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=3)
+        self.delegate_manager = DelegateManager(my_rank, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=6)
 
     def run(self):
         # Add a sync here

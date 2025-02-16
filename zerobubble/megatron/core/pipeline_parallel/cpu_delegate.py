@@ -34,6 +34,7 @@ class CommunicationDelegate(mp.Process):
         os.environ = {}
         os.environ['MASTER_ADDR'] = self.dist_info['MASTER_ADDR']
         os.environ['MASTER_PORT'] = str(self.dist_info['MASTER_PORT'])
+        # os.environ['GLOO_SOCKET_IFNAME'] = self.dist_info['IFNAME']
         dist.init_process_group(
             backend='gloo',
             init_method="env://",
@@ -41,7 +42,7 @@ class CommunicationDelegate(mp.Process):
             world_size=delegate_world_size
         )
         # Init notification to main process
-        print(f"[{self.name} {self.global_rank}] Initialized with rank {delegate_rank} out of {delegate_world_size}")
+        # print(f"[{self.name} {self.global_rank}] Initialized with rank {delegate_rank} out of {delegate_world_size}")
         self.msg_queue.put("init")
         while True:
             time.sleep(0.1)
@@ -53,9 +54,9 @@ class CommunicationDelegate(mp.Process):
 
         if self.role == 'sender':
             while True:
-                print(f"[{self.name} {self.global_rank}] Current iteration contains {iter_task_mbs} microbatches to send.")
+                # print(f"[{self.name} {self.global_rank}] Current iteration contains {iter_task_mbs} microbatches to send.")
                 if iter_task_mbs is None:
-                    print(f"[{self.name} {self.global_rank}] Received sentinel. Exiting.")
+                    # print(f"[{self.name} {self.global_rank}] Received sentinel. Exiting.")
                     break
                 else:
                     for i in range(int(iter_task_mbs)):
@@ -63,27 +64,27 @@ class CommunicationDelegate(mp.Process):
                         if task is None:
                             continue
                         assert isinstance(task, torch.Tensor)
-                        print(f"[{self.name} {self.global_rank}] Get task {i}: {task}.")
+                        # print(f"[{self.name} {self.global_rank}] Get task {i}: {task}.")
                         dist.send(task, dst=1)
-                        print(f"[{self.name} {self.global_rank}] Successfully sent microbatch {i}.")
+                        # print(f"[{self.name} {self.global_rank}] Successfully sent microbatch {i}.")
                 iter_task_mbs = self.msg_queue.get()
 
         elif self.role == 'recver':
             while True:
-                print(f"[{self.name} {self.global_rank}] Current iteration contains {iter_task_mbs} microbatches to receive.")
+                # print(f"[{self.name} {self.global_rank}] Current iteration contains {iter_task_mbs} microbatches to receive.")
                 self.recv_id = 0
                 if iter_task_mbs is None:
-                    print(f"[{self.name} {self.global_rank}] Received sentinel. Exiting.")
+                    # print(f"[{self.name} {self.global_rank}] Received sentinel. Exiting.")
                     break
                 else:
                     for i in range(int(iter_task_mbs)):
-                        print(f"[{self.name} {self.global_rank}] Before recv {i}: buffershape: {self.recv_buffer[i].shape}.")
+                        # print(f"[{self.name} {self.global_rank}] Before recv {i}: buffershape: {self.recv_buffer[i].shape}.")
                         dist.recv(self.recv_buffer[i], src=0)
-                        print(f"[{self.name} {self.global_rank}] Successfully received microbatch {i}.")
+                        # print(f"[{self.name} {self.global_rank}] Successfully received microbatch {i}.")
                         self.task_queue.put(self.recv_buffer[i])
                 iter_task_mbs = self.msg_queue.get()
         dist.destroy_process_group()
-        print(f"[{self.name} {self.global_rank}] Terminated!")
+        # print(f"[{self.name} {self.global_rank}] Terminated!")
 
 
 def start_communication_delegate(name, msg_queue, task_queue, dist_info):
@@ -101,7 +102,7 @@ class DelegateManager():
         Stage2: SF(2, 12306), SB(2, 12317), RF(1, 12306), RB(3, 12317)
         Stage3: SF(None), SB(3, 12317), RF(2, 12306), RB(None)
         '''
-        print("[DelegateManager] Init start.")
+        # print("[DelegateManager] Init start.")
         mp.set_start_method('spawn', force=True)
         dist_info = {"GLOBAL_RANK": dist.get_rank(), 'MASTER_ADDR': None, "MASTER_PORT": 12306, 'data_shape': dele_dshape, 'dtype': dele_dtype}
         self.total_stages = total_stages
@@ -149,7 +150,7 @@ class DelegateManager():
                 self.queues[f'recv_backward_task_{qid}'] = mp.Queue()
                 self.delegates[f'recv_backward_{qid}'] = start_communication_delegate(f'RecvBackward{qid}', self.queues[f'recv_backward_msg_{qid}'], self.queues[f'recv_backward_task_{qid}'], dist_info_recv_backward)
 
-        print("[DelegateManager] Init Wait.")
+        # print("[DelegateManager] Init Wait.")
         # Wait for initialization
         for i in range(self.num_delegates):
             if my_stage != total_stages - 1:
@@ -160,7 +161,7 @@ class DelegateManager():
                 assert self.queues[f'recv_forward_msg_{i}'].get() == 'init'
             if my_stage != total_stages - 1:
                 assert self.queues[f'recv_backward_msg_{i}'].get() == 'init'
-        print("[DelegateManager] Init Done.")
+        # print("[DelegateManager] Init Done.")
 
     def start_iter(self, num_mbs):
         assert num_mbs % self.num_delegates == 0
@@ -200,7 +201,7 @@ if __name__ == '__main__':
     world_size = dist.get_world_size()
     shape = (5, 5)
     dtype = torch.float32
-    print(f"[Rank{my_rank}] Inited!")
+    # print(f"[Rank{my_rank}] Inited!")
 
     ip_list = ["172.24.82.221", "172.24.82.222", "172.24.82.223", "172.24.82.224"]
     my_ip = ip_list[my_rank]
@@ -222,7 +223,7 @@ if __name__ == '__main__':
             x = torch.zeros((5, 5), dtype=torch.float32)
         else:
             x = manager.recv_forward_task_queue.get()
-        print(f"[Rank{my_rank}] F: x={x}!")
+        # print(f"[Rank{my_rank}] F: x={x}!")
         time.sleep(0.03)
         x = f(x)
         if my_rank != world_size - 1:
@@ -233,14 +234,14 @@ if __name__ == '__main__':
             x = torch.full((5, 5), world_size, dtype=torch.float32)
         else:
             x = manager.recv_backward_task_queue.get()
-        print(f"[Rank{my_rank}] B: x={x}!")
+        # print(f"[Rank{my_rank}] B: x={x}!")
         time.sleep(0.03)
         x = b(x)
         if my_rank != 0:
             manager.send_backward_task_queue.put(x, block=False)
 
     def sched_w():
-        print(f"[Rank{my_rank}] W!")
+        # print(f"[Rank{my_rank}] W!")
         time.sleep(0.03)
 
     for it in range(1):
@@ -255,5 +256,5 @@ if __name__ == '__main__':
         dist.barrier()
 
     manager.terminate()
-    print(f"[Rank{my_rank}] Done!")
+    # print(f"[Rank{my_rank}] Done!")
     dist.destroy_process_group()

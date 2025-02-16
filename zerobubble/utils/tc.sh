@@ -1,1 +1,1 @@
-tc qdisc replace dev eth0 root netem delay 30ms
+tc qdisc replace dev eth0 root netem delay ${1}ms
