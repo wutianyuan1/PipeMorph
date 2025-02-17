@@ -15,7 +15,7 @@ class CommunicationDelegate(mp.Process):
         # if role == recver, then it recvs data and put results to the task_queue
         self.task_queue = task_queue
         self.dist_info = dist_info
-        self.global_rank = self.dist_info['GLOBAL_RANK']
+        self.pp_stage = self.dist_info['GLOBAL_RANK']
         if self.role == 'recver':
             assert 'data_shape' in dist_info and 'dtype' in dist_info
             self.recv_buffer = [
@@ -27,6 +27,27 @@ class CommunicationDelegate(mp.Process):
                 ).share_memory_() for _ in range(20)
             ]
             self.recv_id = 0
+
+        # Delay simulation
+        self.delay_time = 0.06
+        self.delay_links = [(2, 3)]
+        self.delay_time_cache = None
+
+    def simulate_delay(self):
+        # Only sender calls this function!
+        assert self.role == 'sender'
+        if self.delay_time_cache is None:
+            self.delay_time_cache = 0
+            for link in self.delay_links:
+                if ('SendForward' in self.name) and (self.pp_stage == link[0]):
+                    self.delay_time_cache = self.delay_time
+                    break
+                elif ('SendBackward' in self.name) and (self.pp_stage == link[1]):
+                    self.delay_time_cache = self.delay_time
+                    break
+            # print(f"[{self.name} {self.pp_stage}] Delay time init to {self.delay_time_cache}")
+        if self.delay_time_cache != 0:
+            time.sleep(self.delay_time_cache)
 
     def run(self):
         delegate_rank = 0 if self.role == 'sender' else 1
@@ -42,7 +63,7 @@ class CommunicationDelegate(mp.Process):
             world_size=delegate_world_size
         )
         # Init notification to main process
-        # print(f"[{self.name} {self.global_rank}] Initialized with rank {delegate_rank} out of {delegate_world_size}")
+        # print(f"[{self.name} {self.pp_stage}] Initialized with rank {delegate_rank} out of {delegate_world_size}")
         self.msg_queue.put("init")
         while True:
             time.sleep(0.1)
@@ -54,9 +75,9 @@ class CommunicationDelegate(mp.Process):
 
         if self.role == 'sender':
             while True:
-                # print(f"[{self.name} {self.global_rank}] Current iteration contains {iter_task_mbs} microbatches to send.")
+                # print(f"[{self.name} {self.pp_stage}] Current iteration contains {iter_task_mbs} microbatches to send.")
                 if iter_task_mbs is None:
-                    # print(f"[{self.name} {self.global_rank}] Received sentinel. Exiting.")
+                    # print(f"[{self.name} {self.pp_stage}] Received sentinel. Exiting.")
                     break
                 else:
                     for i in range(int(iter_task_mbs)):
@@ -64,27 +85,28 @@ class CommunicationDelegate(mp.Process):
                         if task is None:
                             continue
                         assert isinstance(task, torch.Tensor)
-                        # print(f"[{self.name} {self.global_rank}] Get task {i}: {task}.")
+                        # print(f"[{self.name} {self.pp_stage}] Get task {i}: {task}.")
+                        self.simulate_delay()
                         dist.send(task, dst=1)
-                        # print(f"[{self.name} {self.global_rank}] Successfully sent microbatch {i}.")
+                        # print(f"[{self.name} {self.pp_stage}] Successfully sent microbatch {i}.")
                 iter_task_mbs = self.msg_queue.get()
 
         elif self.role == 'recver':
             while True:
-                # print(f"[{self.name} {self.global_rank}] Current iteration contains {iter_task_mbs} microbatches to receive.")
+                # print(f"[{self.name} {self.pp_stage}] Current iteration contains {iter_task_mbs} microbatches to receive.")
                 self.recv_id = 0
                 if iter_task_mbs is None:
-                    # print(f"[{self.name} {self.global_rank}] Received sentinel. Exiting.")
+                    # print(f"[{self.name} {self.pp_stage}] Received sentinel. Exiting.")
                     break
                 else:
                     for i in range(int(iter_task_mbs)):
-                        # print(f"[{self.name} {self.global_rank}] Before recv {i}: buffershape: {self.recv_buffer[i].shape}.")
+                        # print(f"[{self.name} {self.pp_stage}] Before recv {i}: buffershape: {self.recv_buffer[i].shape}.")
                         dist.recv(self.recv_buffer[i], src=0)
-                        # print(f"[{self.name} {self.global_rank}] Successfully received microbatch {i}.")
+                        # print(f"[{self.name} {self.pp_stage}] Successfully received microbatch {i}.")
                         self.task_queue.put(self.recv_buffer[i])
                 iter_task_mbs = self.msg_queue.get()
         dist.destroy_process_group()
-        # print(f"[{self.name} {self.global_rank}] Terminated!")
+        # print(f"[{self.name} {self.pp_stage}] Terminated!")
 
 
 def start_communication_delegate(name, msg_queue, task_queue, dist_info):
