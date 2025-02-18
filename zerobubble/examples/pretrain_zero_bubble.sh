@@ -9,7 +9,13 @@ DIR=`pwd`
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 mkdir -p $DIR/logs
 
-DATASET="/tmp/zb_sample_dataset/dataset/c4_text_document"
+if [ -z $ALIBABA_CLUSTER ]; then
+  DATASET="/tmp/zb_sample_dataset/dataset/c4_text_document"
+  TOKENIZER_MODEL="/tmp/zb_sample_dataset/tokenizers/tokenizer.model"
+else
+  DATASET="/data/oss_bucket_0/zb_dataset/dataset/c4_text_document"
+  TOKENIZER_MODEL="/data/oss_bucket_0/zb_dataset/tokenizers/tokenizer.model"
+fi
 
 if [ ! -e "$DATASET"".idx" ]; then
   wget https://huggingface.co/datasets/ufotalent/zero_bubble_sample_dataset/resolve/main/zb_sample_dataset.tar.gz
@@ -21,7 +27,7 @@ if [ -z "$WORLD_SIZE" ]; then
   export WORLD_SIZE=1
   export RANK=0
   export MASTER_ADDR=localhost
-  export MASTER_PORT=10086
+  export MASTER_PORT=20086
 fi
 
 if [ -z "$GPUS_PER_NODE" ]; then
@@ -37,9 +43,9 @@ WORLD_SIZE_IN_GPUS=$(( $WORLD_SIZE * $GPUS_PER_NODE ))
 if [ -z "$PIPELINE_SIZE" ]; then
   PIPELINE_SIZE=$(( $WORLD_SIZE_IN_GPUS))
   LAYERS=$(( $PIPELINE_SIZE * 4 - 2))
-  MICRO_BATCH_SIZE=1
+  MICRO_BATCH_SIZE=1   # H800: 2
   GLOBAL_BATCH_SIZE=$(( $PIPELINE_SIZE * 3 * $MICRO_BATCH_SIZE ))
-  HIDDEN_SIZE=4096
+  HIDDEN_SIZE=4096  # H800: 6144
   ATTENTION_HEADS=32
   ZERO_BUBBLE_MEM_LIMIT=$((2 * $PIPELINE_SIZE))
 fi
@@ -72,7 +78,7 @@ options=" \
   --max-position-embeddings 2048 \
   --micro-batch-size $MICRO_BATCH_SIZE \
   --global-batch-size $GLOBAL_BATCH_SIZE \
-  --train-samples 360 \
+  --train-samples 3600 \
   --lr-decay-samples 126953125 \
   --lr-warmup-samples 183105 \
   --lr 6.0e-5 \
@@ -83,7 +89,7 @@ options=" \
   --eval-interval $EVAL_INTERVAL \
   --data-path ${DATASET} \
   --tokenizer-type GPTSentencePieceTokenizer \
-  --tokenizer-model /tmp/zb_sample_dataset/tokenizers/tokenizer.model \
+  --tokenizer-model $TOKENIZER_MODEL \
   --split 98,2,0 \
   --clip-grad 8.0 \
   --weight-decay 0.1 \
