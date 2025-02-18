@@ -1,27 +1,22 @@
 #!/bin/bash
-cd /home/twubt/workspace/test-varuna/zerobubble
+export USR_HOME=twubt
+export LD_PRELOAD=/home/$USR_HOME/workspace/test-varuna/zerobubble/megatron/core/failslow_injection/libinjection.so
+export ENABLE_ZERO_BUBBLE=1 
+export CUDA_DEVICE_MAX_CONNECTIONS=1
+
+cd /home/$USR_HOME/workspace/test-varuna/zerobubble
 source ~/.bashrc
 echo `pwd`
 echo $SLURM_NODELIST
-python_exe=`which python`
-if [ -z "$S" ]; then
-  S=2
-fi
-export LD_PRELOAD=/home/twubt/workspace/test-varuna/zerobubble/megatron/core/failslow_injection/libinjection.so
-export ENABLE_ZERO_BUBBLE=1 
-export GPUS_PER_NODE=1
-
-export CUDA_DEVICE_MAX_CONNECTIONS=1
-
 DIR=`pwd`
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 mkdir -p $DIR/logs
 
-DATASET="/home/twubt/workspace/test-varuna/zerobubble/zb_sample_dataset/dataset/c4_text_document"
+DATASET="/home/$USR_HOME/workspace/test-varuna/zerobubble/zb_sample_dataset/dataset/c4_text_document"
 
 if [ ! -e "$DATASET"".idx" ]; then
   wget https://huggingface.co/datasets/ufotalent/zero_bubble_sample_dataset/resolve/main/zb_sample_dataset.tar.gz
-  tar -xvf zb_sample_dataset.tar.gz -C /home/twubt/workspace/test-varuna/zerobubble/
+  tar -xvf zb_sample_dataset.tar.gz -C /home/$USR_HOME/workspace/test-varuna/zerobubble/
 fi
 
 # Running locally
@@ -87,7 +82,7 @@ options=" \
   --eval-interval $EVAL_INTERVAL \
   --data-path ${DATASET} \
   --tokenizer-type GPTSentencePieceTokenizer \
-  --tokenizer-model /home/twubt/workspace/test-varuna/zerobubble/zb_sample_dataset/tokenizers/tokenizer.model \
+  --tokenizer-model /home/$USR_HOME/workspace/test-varuna/zerobubble/zb_sample_dataset/tokenizers/tokenizer.model \
   --split 98,2,0 \
   --clip-grad 8.0 \
   --weight-decay 0.1 \
@@ -134,7 +129,7 @@ run_cmd="torchrun --nnodes $WORLD_SIZE \
   --node_rank $RANK \
   --master_addr $MASTER_ADDR \
   --master_port $MASTER_PORT \
-  --nproc_per_node=$GPUS_PER_NODE ${DIR}/pretrain_gpt.py $@ ${options}"
+  --nproc_per_node=$SLURM_GPUS_PER_NODE ${DIR}/pretrain_gpt.py $@ ${options}"
 
 if [ ! -z "$PROFILED" ]; then
   run_cmd="nsys profile -s none -t nvtx,cuda \
