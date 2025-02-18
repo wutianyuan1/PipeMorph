@@ -20,7 +20,7 @@ SLOW_LINKS = []
 Shape = Union[List[int], torch.Size]
 
 
-def get_forward_backward_func():
+def get_forward_backward_func(use_delegate: bool = False):
     """Retrieves the appropriate forward_backward function given the
     configuration of parallel_state.
 
@@ -95,11 +95,9 @@ def get_forward_backward_func():
 
     """
     if get_args().enable_zero_bubble:
-        # from megatron.core.pipeline_parallel.zb_schedules import get_zero_bubble_forward_backward_func
-        # from megatron.core.pipeline_parallel.our_schedules import get_zero_bubble_forward_backward_func
-        # from megatron.core.pipeline_parallel.cpu_schedules import get_zero_bubble_forward_backward_func
+        from megatron.core.pipeline_parallel.cpu_schedules import get_zero_bubble_cpu_forward_backward_func
         from megatron.core.pipeline_parallel.zb_schedules_origin import get_zero_bubble_forward_backward_func
-        return get_zero_bubble_forward_backward_func()
+        return get_zero_bubble_forward_backward_func() if not use_delegate else get_zero_bubble_cpu_forward_backward_func()
     pipeline_model_parallel_size = parallel_state.get_pipeline_model_parallel_world_size()
     if pipeline_model_parallel_size > 1:
         if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:

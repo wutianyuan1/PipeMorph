@@ -209,7 +209,7 @@ def ilp_results(graph: Graph, F, comm_delay):
     return local_order
 
 
-def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
+def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List, delay_time: float):
     # config.cost_f = [28, 32, 32, 31]
     # config.cost_b = [32, 40, 45, 38]
     # config.cost_w = [15, 21, 29, 24]
@@ -231,8 +231,8 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
         (i, i + 1): config.cost_comm for i in range(nstages - 1)
     }
     slow_stages = []
-    # comm_delay[(2, 3)] = 60
-    # comm_delay[(1, 2)] = 185
+    for link in delay_links:
+        comm_delay[link] = delay_time
     re_schedule = True
     delay = comm_delay if re_schedule else {(i, i + 1): 0 for i in range(nstages - 1)}
     delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, delay, True)

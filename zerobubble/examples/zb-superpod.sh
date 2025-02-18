@@ -1,5 +1,6 @@
 #!/bin/bash
 export USR_HOME=twubt
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/twubt/workspace/hiredis/build
 export LD_PRELOAD=/home/$USR_HOME/workspace/test-varuna/zerobubble/megatron/core/failslow_injection/libinjection.so
 export ENABLE_ZERO_BUBBLE=1 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
@@ -34,11 +35,11 @@ fi
 WORLD_SIZE_IN_GPUS=4
 
 if [ -z "$PIPELINE_SIZE" ]; then
-  PIPELINE_SIZE=$(( $WORLD_SIZE_IN_GPUS))
-  LAYERS=$(( $PIPELINE_SIZE * 8 - 2))
+  export PIPELINE_SIZE=$(( $WORLD_SIZE_IN_GPUS))
+  LAYERS=$(( $PIPELINE_SIZE * 16 - 2))
   MICRO_BATCH_SIZE=1
   GLOBAL_BATCH_SIZE=$(( $PIPELINE_SIZE * 3 * $MICRO_BATCH_SIZE ))
-  HIDDEN_SIZE=6144
+  HIDDEN_SIZE=3072
   ATTENTION_HEADS=32
   ZERO_BUBBLE_MEM_LIMIT=$((2 * $PIPELINE_SIZE))
 fi
@@ -78,7 +79,7 @@ options=" \
   --min-lr 6.0e-6 \
   --lr-decay-style cosine \
   --log-interval 1 \
-  --eval-iters 40 \
+  --eval-iters 1 \
   --eval-interval $EVAL_INTERVAL \
   --data-path ${DATASET} \
   --tokenizer-type GPTSentencePieceTokenizer \
@@ -140,12 +141,19 @@ if [ ! -z "$PROFILED" ]; then
     $run_cmd"
 fi
 
+if [[ $RANK -eq 0 ]]; then
+  echo "Start redis server on RANK 0..."
+  redis-server --bind $MASTER_ADDR --save "" --appendonly no &
+  REDIS_PID=$!
+fi
+
+
 echo $run_cmd
-# sleep 100000
 eval $run_cmd
 
 set +x
 
 if [[ $RANK -eq 0 ]]; then
-    python ./utils/plot_real.py --num_stages 4
+  kill $REDIS_PID
+  python ./utils/plot_real.py --num_stages $PIPELINE_SIZE
 fi

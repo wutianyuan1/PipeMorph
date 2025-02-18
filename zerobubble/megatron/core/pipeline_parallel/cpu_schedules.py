@@ -2,6 +2,7 @@ import contextlib
 import os
 import time
 import socket
+import redis
 import torch
 import torch.distributed
 import torch.cuda.nvtx as nvtx
@@ -69,7 +70,6 @@ class OurScheduler:
 
         # Fail-slow injection
         self.slow_links = [(1, 2)]
-        self.repeat_times = 3
         self.timer = EventTimer()
         self.comp_stream = torch.cuda.Stream(priority=-100)
 
@@ -117,6 +117,8 @@ class OurScheduler:
         deallocate_output_tensor(output_tensor[0], self.config.deallocate_pipeline_outputs)
 
     def schedule_b(self, scheduled_node: ScheduledNode, op_id: int):
+        if self.forward_only:
+            return
         delegate_id = op_id % self.delegate_manager.num_delegates
         if not self.forward_only:
             input_tensor = self.input_tensors.pop(0)
@@ -244,7 +246,7 @@ class OurScheduler:
         my_ip = ip_list[my_rank]
         prev_ip = ip_list[my_rank - 1] if my_rank != 0 else None
         next_ip = ip_list[my_rank + 1] if my_rank != self.num_stages - 1 else None
-        self.delegate_manager = DelegateManager(my_rank, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=6)
+        self.delegate_manager = DelegateManager(my_rank, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=3)
 
     def run(self):
         # Add a sync here
@@ -254,7 +256,7 @@ class OurScheduler:
         self.disable_grad_sync()
         self.iter_cnt += 1
         # Now, only run MAXITERS iterations for testing and record the last iter's performance
-        MAXITERS = 6
+        MAXITERS = 10
         global log_file
         if self.iter_cnt == MAXITERS:
             self.delegate_manager.terminate()
@@ -311,6 +313,13 @@ class OurScheduler:
         return self.forward_data_store
 
     def __call__(self, *args, **kwargs):
+        # If we receive this signal, kill all CPU delegates.
+        if 'terminate_signal' in kwargs and kwargs['terminate_signal']:
+            self.delegate_manager.terminate()
+            return
+        # HACK: just skip the evaluation iters
+        if kwargs['forward_only']:
+            return self.forward_data_store
         if self.is_first_run:
             self.prepare(*args, **kwargs)
             self.is_first_run = False
@@ -319,6 +328,9 @@ class OurScheduler:
 
 our_scheduler = OurScheduler()
 schedule = None
+redis_client = None
+delay_links, delay_time = [], 0.0
+reschedule_at_next_iter = False
 
 
 def get_our_scheduler_instance():
@@ -327,7 +339,33 @@ def get_our_scheduler_instance():
 
 
 def update_schedule(num_stages, num_microbatches):
-    global schedule
+    global schedule, redis_client, delay_links, delay_time, reschedule_at_next_iter
+    if redis_client is None:
+        redis_client = redis.StrictRedis(host=os.environ['MASTER_ADDR'], port=int(os.environ.get('REDIS_PORT', '6379')))
+
+    # If the previous iteration requires a re-schedule, clear the old schedule
+    if reschedule_at_next_iter:
+        reschedule_at_next_iter = False
+        schedule = None
+
+    delay_links_reply = redis_client.get("slow_links")
+    new_delay_links = []
+    new_delay_time = 0.0
+    if delay_links_reply is not None:
+        delay_links_str = delay_links_reply.decode()
+        if delay_links_str != "":
+            for pair in delay_links_str.split(","):
+                start, end = pair.split("_")
+                new_delay_links.append((int(start), int(end)))
+    delay_time_reply = redis_client.get("sleep_time")
+    if delay_time_reply is not None:
+        new_delay_time = float(delay_time_reply)
+    # Check if the delay info has been changed
+    if new_delay_time != delay_time or new_delay_links != delay_links:
+        delay_links = new_delay_links
+        delay_time = new_delay_time
+        reschedule_at_next_iter = True  # Require re-schedule
+
     if schedule is None:
         schedule = auto_schedule(
             num_stages,
@@ -335,7 +373,9 @@ def update_schedule(num_stages, num_microbatches):
             GraphConfig(
                 mem_f=[1000], mem_b=[-500], mem_w=[-500],
                 cost_f=[1000] * 4, cost_b=[1000] * 4, cost_w=[1000] * 4, cost_comm=0
-            )
+            ),
+            delay_links,
+            delay_time * 1000.0  # convert s to ms
         )
         for stage in range(num_stages):
             print_rank_0(f'Stage {stage}')
@@ -343,12 +383,13 @@ def update_schedule(num_stages, num_microbatches):
     return schedule
 
 
-def get_zero_bubble_forward_backward_func():
+def get_zero_bubble_cpu_forward_backward_func():
     pipeline_model_parallel_size = parallel_state.get_pipeline_model_parallel_world_size()
     assert pipeline_model_parallel_size > 1, "[OurSchedule] must enable pipeline parallelism"
     scheduler_instance = get_our_scheduler_instance()
     pp_rank = parallel_state.get_pipeline_model_parallel_rank()
     global_schedule = update_schedule(pipeline_model_parallel_size, get_num_microbatches())
+    scheduler_instance.schedules = global_schedule[pp_rank]
 
     def forward_backward_func(**kwargs):
         return scheduler_instance(schedule=global_schedule[pp_rank], **kwargs)
