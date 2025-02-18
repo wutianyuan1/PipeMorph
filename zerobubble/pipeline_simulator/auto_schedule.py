@@ -214,9 +214,9 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
     # config.cost_b = [32, 40, 45, 38]
     # config.cost_w = [15, 21, 29, 24]
 
-    config.cost_f = [35]*4
-    config.cost_b = [35]*4
-    config.cost_w = [35]*4
+    config.cost_f = [15, 16, 16, 15]
+    config.cost_b = [16, 19, 19, 16]
+    config.cost_w = [11, 12, 12, 11]
     config.cost_comm = 0
     print(config)
     print(f"{nstages} stages, {nmb} micro-batches")
@@ -231,8 +231,8 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig):
         (i, i + 1): config.cost_comm for i in range(nstages - 1)
     }
     slow_stages = []
-    comm_delay[(0, 1)] = 160
-    comm_delay[(1, 2)] = 185
+    # comm_delay[(2, 3)] = 60
+    # comm_delay[(1, 2)] = 185
     re_schedule = True
     delay = comm_delay if re_schedule else {(i, i + 1): 0 for i in range(nstages - 1)}
     delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, delay, True)

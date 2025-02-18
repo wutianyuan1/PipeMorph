@@ -1,6 +1,7 @@
 import contextlib
 import os
 import time
+import socket
 import torch
 import torch.distributed
 import torch.cuda.nvtx as nvtx
@@ -31,6 +32,16 @@ timer_sync = True
 def print_with_rank(message):
     global log_file
     print(f"[RANK{torch.distributed.get_rank()}] " + str(message), flush=True, file=log_file)
+
+
+def get_ip_list():
+    hostname = socket.gethostname()
+    my_ip = torch.tensor([int(i) for i in socket.gethostbyname(hostname).split(".")], device='cuda', dtype=torch.int32)
+    ip_tensor_list = [torch.zeros(4, dtype=torch.int32, device='cuda') for _ in range(torch.distributed.get_world_size())]
+    torch.distributed.all_gather(ip_tensor_list, my_ip)
+    ip_list = [".".join([str(i) for i in ip_tensor.cpu().tolist()]) for ip_tensor in ip_tensor_list]
+    print(f"My IP: {my_ip}, IP list: {ip_list}")
+    return ip_list
 
 
 class OurScheduler:
@@ -229,7 +240,7 @@ class OurScheduler:
         self._reset()
 
         my_rank = self.stage
-        ip_list = ["172.24.82.221", "172.24.82.222", "172.24.82.223", "172.24.82.224"]
+        ip_list = get_ip_list()
         my_ip = ip_list[my_rank]
         prev_ip = ip_list[my_rank - 1] if my_rank != 0 else None
         next_ip = ip_list[my_rank + 1] if my_rank != self.num_stages - 1 else None
