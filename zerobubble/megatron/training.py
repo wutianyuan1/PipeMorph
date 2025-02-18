@@ -8,6 +8,8 @@ import collections
 import math
 import logging
 import sys
+
+import torch.distributed
 from .log_handler import CustomHandler
 # Make default logging level INFO, but filter out all log messages not from MCore.
 logging.basicConfig(handlers=[CustomHandler()], level=logging.INFO)
@@ -15,6 +17,8 @@ import time
 # The earliest we can measure the start time.
 _TRAIN_START_TIME = time.time()
 import torch
+import redis
+import os
 
 from megatron import get_args
 from megatron import get_signal_handler
@@ -48,6 +52,7 @@ from megatron.data.data_samplers import build_pretraining_data_loader
 from megatron.utils import calc_params_l2_norm
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.weight_grad_store import WeightGradStore
+from megatron.core.failslow_injection.slow_link_injector import SlowLinkInjector
 from megatron.utils import report_memory
 from megatron.model.vision.knn_monitor import compute_feature_bank
 
@@ -187,6 +192,10 @@ def pretrain(train_valid_test_dataset_provider,
                                    test_data_iterator, model,
                                    iteration, process_non_loss_data_func, config,
                                    verbose=True, write_to_tensorboard=not args.skip_train)
+
+    # Madoka: the CPU delegates need an explict signal to shutdown, so we pass a "terminate_signal" to the scheduler to shutdown the process.
+    forward_backward_func = get_forward_backward_func(use_delegate=True)
+    forward_backward_func(terminate_signal=True)
 
 
 def update_train_iters(args):
@@ -411,7 +420,7 @@ def setup_model_and_optimizer(model_provider_func,
 
 
 
-def train_step(forward_step_func, data_iterator,
+def train_step(use_delegate, forward_step_func, data_iterator,
                model, optimizer, opt_param_scheduler, config, no_optimizer_post_validation=False):
     """Single training step."""
     args = get_args()
@@ -433,7 +442,7 @@ def train_step(forward_step_func, data_iterator,
         config.timers = None
 
     def run_forward_backward_func():
-        forward_backward_func = get_forward_backward_func()
+        forward_backward_func = get_forward_backward_func(use_delegate)
         return forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=data_iterator,
@@ -460,10 +469,8 @@ def train_step(forward_step_func, data_iterator,
     if get_args().profile:
         torch.cuda.nvtx.range_push('Optimizer')
     if args.enable_zero_bubble and args.enable_optimizer_post_validation:
-        # from megatron.core.pipeline_parallel.zb_schedules import get_zb_scheduler_instance
-        # zb_scheduler = get_zb_scheduler_instance
-        from .core.pipeline_parallel.our_schedules import get_our_scheduler_instance
-        zb_scheduler = get_our_scheduler_instance()
+        from megatron.core.pipeline_parallel.zb_schedules import get_zb_scheduler_instance
+        zb_scheduler = get_zb_scheduler_instance
         if optimizer.post_validation_enabled and not no_optimizer_post_validation:
             optimizer.pre_step(args, timers)
             zb_scheduler.optimizer = optimizer
@@ -790,6 +797,15 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         gc.disable()
         gc.collect()
 
+    # Madoka: add this redis client to record iteration number and inject fail-slows.
+    # Initially, there are no fail-slow links or ranks, just set to empty and 0.0.
+    redis_client = redis.StrictRedis(host=os.environ['MASTER_ADDR'], port=int(os.environ.get('REDIS_PORT', '6379')))
+    if torch.distributed.get_rank() == 0:
+        slow_injector = SlowLinkInjector('./megatron/core/failslow_injection/slowlinks.trace', redis_client)
+    else:
+        slow_injector = None
+    use_delegate_tensor = torch.tensor([0], device='cpu', dtype=torch.int32)
+
     while iteration < args.train_iters:
         if args.profile and \
            iteration == args.profile_step_start and \
@@ -799,12 +815,29 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
 
         update_num_microbatches(args.consumed_train_samples)
         args.curr_iteration = iteration
-        
+
+        # Madoka: forward step of the slow link injector
+        if slow_injector is not None:
+            slow_injector.step(iteration)
+
+        # We use the first 2 iterations to init two transmission modes, iter=0 for delegate mode, iter>1 for normal mode
+        use_delegate = True if iteration == 0 else False
+        # For other iterations, if the delay is not 0, we use delegate if sleep_time is not 0.
+        sleep_time_str = redis_client.get("sleep_time")
+        if sleep_time_str is not None and float(sleep_time_str) != 0.0:
+            # print("Use delegate mode!")
+            use_delegate = True
+        use_delegate_tensor[0] = 1 if use_delegate else 0
+        # Use delegate if one wants to use
+        torch.distributed.all_reduce(use_delegate_tensor, op=torch.distributed.ReduceOp.MAX)
+        use_delegate = True if use_delegate_tensor[0] == 1 else False
+
         iteration += 1
         do_eval = args.eval_interval and iteration % args.eval_interval == 0 and args.do_valid
         no_optimizer_post_validation = do_eval or (args.exit_interval and iteration % args.exit_interval == 0)
         loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = \
-            train_step(forward_step_func,
+            train_step(use_delegate,
+                       forward_step_func,
                        train_data_iterator,
                        model,
                        optimizer,

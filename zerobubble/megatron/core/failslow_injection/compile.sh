@@ -1,1 +1,1 @@
-nvcc -I/usr/local/cuda-12.2/targets/x86_64-linux/include/ -L/usr/local/cuda-12.2/targets/x86_64-linux/lib/ -arch=sm_86 -shared failslow_injection.cu -o libinjection.so -lcuda -lnccl -lcudart
+nvcc -I/usr/local/cuda-12.2/targets/x86_64-linux/include/ -L/usr/local/cuda-12.2/targets/x86_64-linux/lib/ -I/home/twubt/workspace/ -L/home/twubt/workspace/hiredis/build -arch=sm_86 -shared failslow_injection.cu -o libinjection.so -lcuda -lnccl -lcudart -lhiredis

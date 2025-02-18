@@ -6,7 +6,7 @@
 #include <sstream>
 
 
-class EventHandler {
+class Client {
 private:
     redisContext* context;
 
@@ -14,7 +14,7 @@ private:
         std::string cmd = "GET " + key;
         redisReply* reply = (redisReply*)redisCommand(context, cmd.c_str());
         if (reply == nullptr) {
-            printf("NullReply Error: %s\n", context->errstr);
+            printf("[RedisClient] NullReply Error: %s\n", context->errstr);
             *status = -1;
             return "Error";
         }
@@ -23,7 +23,7 @@ private:
         if (reply->type == REDIS_REPLY_STRING) {
             ret = reply->str;
         } else {
-            printf("Unexpected reply type: %d\n", reply->type);
+            printf("[RedisClient] Unexpected reply type: %d\n", reply->type);
             *status = -1;
             ret = "Error";
         }
@@ -33,21 +33,21 @@ private:
     }
 
 public:
-    EventHandler(const std::string address, int port) {
+    Client(const std::string address, int port) {
         struct timeval timeout = { 1, 500000 }; // 1.5 seconds
         context = redisConnectWithTimeout(address.c_str(), port, timeout);
         if (context == nullptr || context->err) {
             if (context) {
-                printf("Connection error: %s", context->errstr);
+                printf("[RedisClient] Connection error: %s", context->errstr);
                 redisFree(context);
             } else {
-                printf("Connection error: can't allocate redis context\n");
+                printf("[RedisClient] Connection error: can't allocate redis context\n");
             }
             exit(1);
         }
     }
 
-    ~EventHandler() {
+    ~Client() {
         if (context != nullptr) {
             redisFree(context);
         }

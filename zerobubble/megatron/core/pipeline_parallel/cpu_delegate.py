@@ -1,8 +1,11 @@
 import torch
 import time
 import os
+import redis
 import torch.distributed as dist
 import torch.multiprocessing as mp
+
+CHECK_INTERVAL = 8
 
 
 class CommunicationDelegate(mp.Process):
@@ -29,14 +32,30 @@ class CommunicationDelegate(mp.Process):
             self.recv_id = 0
 
         # Delay simulation
-        self.delay_time = 0.06
-        self.delay_links = [(2, 3)]
+        self.delay_time = 0.0
+        self.delay_links = []
         self.delay_time_cache = None
+        self.send_count = 0
 
     def simulate_delay(self):
         # Only sender calls this function!
         assert self.role == 'sender'
-        if self.delay_time_cache is None:
+        # Update delay and slow links every CHECK_INTERVAL sends
+        if self.send_count == 0:
+            self.delay_links = []
+            self.delay_time = 0.0
+            delay_links_reply = self.redis_client.get("slow_links")
+            if delay_links_reply is not None:
+                delay_links_str = delay_links_reply.decode()
+                if delay_links_str != "":
+                    for pair in delay_links_str.split(","):
+                        start, end = pair.split("_")
+                        self.delay_links.append((int(start), int(end)))
+            delay_time_reply = self.redis_client.get("sleep_time")
+            if delay_time_reply is not None:
+                self.delay_time = float(delay_time_reply)
+            # print(f"[{self.name} {self.pp_stage}] Update delay: links={self.delay_links}, time={self.delay_time}")
+
             self.delay_time_cache = 0
             for link in self.delay_links:
                 if ('SendForward' in self.name) and (self.pp_stage == link[0]):
@@ -46,15 +65,22 @@ class CommunicationDelegate(mp.Process):
                     self.delay_time_cache = self.delay_time
                     break
             # print(f"[{self.name} {self.pp_stage}] Delay time init to {self.delay_time_cache}")
+
+        self.send_count = (self.send_count + 1) % CHECK_INTERVAL
+
         if self.delay_time_cache != 0:
             time.sleep(self.delay_time_cache)
 
     def run(self):
         delegate_rank = 0 if self.role == 'sender' else 1
         delegate_world_size = 2
+        redis_master_addr = os.environ['MASTER_ADDR']
+        redis_port = os.environ.get('REDIS_PORT', '6379')
         os.environ = {}
         os.environ['MASTER_ADDR'] = self.dist_info['MASTER_ADDR']
         os.environ['MASTER_PORT'] = str(self.dist_info['MASTER_PORT'])
+        os.environ['REDIS_MASTER_ADDR'] = redis_master_addr
+        os.environ['REDIS_PORT'] = redis_port
         # os.environ['GLOO_SOCKET_IFNAME'] = self.dist_info['IFNAME']
         dist.init_process_group(
             backend='gloo',
@@ -62,6 +88,7 @@ class CommunicationDelegate(mp.Process):
             rank=delegate_rank,
             world_size=delegate_world_size
         )
+        self.redis_client = redis.StrictRedis(host=os.environ['REDIS_MASTER_ADDR'], port=int(os.environ.get('REDIS_PORT', '6379')))
         # Init notification to main process
         # print(f"[{self.name} {self.pp_stage}] Initialized with rank {delegate_rank} out of {delegate_world_size}")
         self.msg_queue.put("init")

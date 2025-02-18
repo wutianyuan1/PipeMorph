@@ -1142,10 +1142,9 @@ class ZeroBubbleScheduler:
         return updated, grad_norm, rollback
 
     def run(self):
-        print("-" * 10 + "YOU REACH HERE" + "-" * 10)
         self.disable_grad_sync()
         self.iter_cnt += 1
-        MAXITERS = 6
+        MAXITERS = 25
         global log_file
         if self.iter_cnt == MAXITERS:
             exit(0)
@@ -1219,9 +1218,10 @@ class ZeroBubbleScheduler:
         return self.forward_data_store
 
     def __call__(self, *args, **kwargs):
+        if 'terminate_signal' in kwargs and kwargs['terminate_signal']:
+            return
         if kwargs['forward_only']:
             self.prepare(*args, **kwargs)
-            assert self.do_post_validation
             self.do_post_validation = True
             self.is_first_run = True
             return self.run()
