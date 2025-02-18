@@ -3,6 +3,8 @@ import itertools
 from typing import Iterator, List, Union
 
 import torch
+import time
+import os
 
 from megatron import core, get_args, get_num_microbatches, print_rank_0
 from megatron.core import parallel_state
@@ -26,9 +28,16 @@ from megatron.core.pipeline_parallel.schedules import (
 from megatron.core.weight_grad_store import WeightGradStore
 from megatron.timers import Timer
 from megatron.utils import is_second_last_pipeline_stage
+from megatron.core.pipeline_parallel.event_timer import EventTimer
 
+log_file = None
+timer_sync = True
 
 AUTO_SCHEDULE_COMMUNICATION_TYPES = {'RECV_FORWARD', 'RECV_BACKWARD', 'SEND_FORWARD', 'SEND_BACKWARD'}
+
+def print_with_rank(message):
+    global log_file
+    print(f"[RANK{torch.distributed.get_rank()}] " + str(message), flush=True, file=log_file)
 
 
 class ScheduleTimers:
@@ -134,39 +143,48 @@ def fused_pipeline_ops(
     ops = []
     group = get_pipeline_model_parallel_group()
     for t in tensor_send_prev:
-        send_prev_op = torch.distributed.P2POp(
-            torch.distributed.isend,
-            t,
-            get_pipeline_model_parallel_prev_rank(),
-            group,
-        )
-        ops.append(send_prev_op)
+        # send_prev_op = torch.distributed.P2POp(
+        #     torch.distributed.isend,
+        #     t,
+        #     get_pipeline_model_parallel_prev_rank(),
+        #     group,
+        # )
+        # ops.append(send_prev_op)
+        req = torch.distributed.isend(t, get_pipeline_model_parallel_prev_rank(), group)
+        ops.append(req)
     for t in tensor_recv_prev:
-        recv_prev_op = torch.distributed.P2POp(
-            torch.distributed.irecv,
-            t,
-            get_pipeline_model_parallel_prev_rank(),
-            group,
-        )
-        ops.append(recv_prev_op)
+        # recv_prev_op = torch.distributed.P2POp(
+        #     torch.distributed.irecv,
+        #     t,
+        #     get_pipeline_model_parallel_prev_rank(),
+        #     group,
+        # )
+        # ops.append(recv_prev_op)
+        req = torch.distributed.irecv(t, get_pipeline_model_parallel_prev_rank(), group)
+        ops.append(req)
     for t in tensor_send_next:
-        send_next_op = torch.distributed.P2POp(
-            torch.distributed.isend,
-            t,
-            get_pipeline_model_parallel_next_rank(),
-            group,
-        )
-        ops.append(send_next_op)
+        # send_next_op = torch.distributed.P2POp(
+        #     torch.distributed.isend,
+        #     t,
+        #     get_pipeline_model_parallel_next_rank(),
+        #     group,
+        # )
+        # ops.append(send_next_op)
+        req = torch.distributed.isend(t, get_pipeline_model_parallel_next_rank(), group)
+        ops.append(req)
     for t in tensor_recv_next:
-        recv_next_op = torch.distributed.P2POp(
-            torch.distributed.irecv,
-            t,
-            get_pipeline_model_parallel_next_rank(),
-            group,
-        )
-        ops.append(recv_next_op)
+        # recv_next_op = torch.distributed.P2POp(
+        #     torch.distributed.irecv,
+        #     t,
+        #     get_pipeline_model_parallel_next_rank(),
+        #     group,
+        # )
+        # ops.append(recv_next_op)
+        req = torch.distributed.irecv(t, get_pipeline_model_parallel_next_rank(), group)
+        ops.append(req)
     if len(ops) > 0:
-        reqs = torch.distributed.batch_isend_irecv(ops)
+        # reqs = torch.distributed.batch_isend_irecv(ops)
+        reqs = ops
     else:
         reqs = []
     return reqs
@@ -740,6 +758,10 @@ class ZeroBubbleScheduler:
         self.is_first_run = True
         self.optimizer = None
 
+        # For network delay simulation
+        self.iter_cnt = 0
+        self.timer = EventTimer()
+
     def _free_buffers(self):
         self.input_tensors = []
         self.output_tensors = []
@@ -854,7 +876,7 @@ class ZeroBubbleScheduler:
         if (next_compute is not None and is_consumer(scheduled_node, next_compute)) or not next_is_comm or self.forward_only:
             self.flush()
 
-    def schedule_f(self, scheduled_node):
+    def schedule_f(self, scheduled_node) -> None:
         if core.parallel_state.is_pipeline_first_stage():
             input_tensor = [None] * len(self.recv_tensor_shapes)
         else:
@@ -863,12 +885,15 @@ class ZeroBubbleScheduler:
                 for hh in h:
                     hh.wait()
             input_tensor = input_tensor[0]
+            a = torch.sum(input_tensor[0])
+            assert a != 111.111
         if get_args().profile:
             torch.cuda.nvtx.range_push(f'F{scheduled_node.minibatch}')
         if self.run_timer:
             ScheduleTimers.for_chunk(0).f_cnt += 1
             ScheduleTimers.for_chunk(0).f.start()
             mem_before = torch.cuda.memory_allocated()
+        timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
         output_tensor = forward_step(
             self.forward_step_func,
             self.data_iterator,
@@ -880,6 +905,7 @@ class ZeroBubbleScheduler:
             self.collect_non_loss_data,
             checkpoint_activations_microbatch=None,
         )
+        self.timer.end(timer_id, "F")
         if self.run_timer:
             ScheduleTimers.for_chunk(0).f.stop()
             ScheduleTimers.for_chunk(0).f_mem += torch.cuda.memory_allocated() - mem_before
@@ -907,16 +933,20 @@ class ZeroBubbleScheduler:
                     for hh in h:
                         hh.wait()
                 output_tensor_grad = output_tensor_grad[0]
+                a = torch.sum(output_tensor_grad[0])
+                assert a != 111.111
             if get_args().profile:
                 torch.cuda.nvtx.range_push(f'B{scheduled_node.minibatch}')
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).b_cnt += 1
                 ScheduleTimers.for_chunk(0).b.start()
                 mem_before = torch.cuda.memory_allocated()
+            timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
             input_tensor_grad = backward_step(
                 input_tensor, output_tensor, output_tensor_grad, self.model_type,
                 self.config
             )
+            self.timer.end(timer_id, "B")
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).b.stop()
                 ScheduleTimers.for_chunk(0).b_mem += torch.cuda.memory_allocated() - mem_before
@@ -932,7 +962,9 @@ class ZeroBubbleScheduler:
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).w_cnt += 1
                 ScheduleTimers.for_chunk(0).w.start()
+            timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
             WeightGradStore.pop()
+            self.timer.end(timer_id, "W")
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).w.stop()
             if get_args().profile:
@@ -1017,8 +1049,8 @@ class ZeroBubbleScheduler:
             decoder_seq_length=decoder_seq_length,
             config=config,
         )
-        bootstrap_and_profile_p2p_communication(config, send_tensor_shapes,
-                                                recv_tensor_shapes)
+        # bootstrap_and_profile_p2p_communication(config, send_tensor_shapes,
+        #                                         recv_tensor_shapes)
 
         run_timer = (
             get_args().zero_bubble_pipeline_timers_end_iter
@@ -1110,12 +1142,25 @@ class ZeroBubbleScheduler:
         return updated, grad_norm, rollback
 
     def run(self):
+        print("-" * 10 + "YOU REACH HERE" + "-" * 10)
         self.disable_grad_sync()
-
+        self.iter_cnt += 1
+        MAXITERS = 6
+        global log_file
+        if self.iter_cnt == MAXITERS:
+            exit(0)
         if get_args().profile:
             torch.cuda.nvtx.range_push(f'iter_{torch.distributed.get_rank()}_{ScheduleTimers.iter_counter}')
 
+        log_file = open(f"./GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}.log", 'w') if self.iter_cnt == MAXITERS - 1 else open(os.devnull, 'w')
+
+        # Get a unified timestamp across all ranks
+        ts = torch.tensor([time.time() * 1000], dtype=torch.float64, device=f'cuda:{torch.distributed.get_rank() % torch.cuda.device_count()}')
+        torch.distributed.all_reduce(ts, op=torch.distributed.ReduceOp.MAX)
+        self.t_start = ts.item()
+
         it = self.it
+        # print_rank_0([n.type for n in self.schedules if n.type in AUTO_SCHEDULE_COMMUNICATION_TYPES or n.type in []])
         while it < len(self.schedules):
             scheduled_node = self.schedules[it]
             if "POST_VALIDATION" in scheduled_node.type:
@@ -1144,7 +1189,9 @@ class ZeroBubbleScheduler:
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).w_cnt += pending_ws
                 ScheduleTimers.for_chunk(0).w.start()
+            timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
             WeightGradStore.clear(self.model)
+            self.timer.end(timer_id, f"{pending_ws}W")
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).w.stop()
         if get_args().profile:
@@ -1155,6 +1202,7 @@ class ZeroBubbleScheduler:
             for hh in h:
                 for hhh in hh:
                     hhh.wait()
+        self.timer.print_all(print_func=print_with_rank)
 
         if not self.forward_only:
             # Launch any remaining grad reductions
@@ -1189,7 +1237,7 @@ class ZeroBubbleScheduler:
             self.do_post_validation = False
         if self.do_post_validation:
             self.prepare(*args, **kwargs)
-            result = self.run_until_post_validation()
+            result = self.run()
             self.do_post_validation = False
         else:
             result = self.run()

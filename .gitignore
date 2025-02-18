@@ -1,4 +1,5 @@
 __pycache__
+*.txt
 *.png
 *.log
 *.jpg
@@ -6,3 +7,8 @@ build/
 *.tar.gz
 *.so
 *.a
+*.nsys-rep
+*.tar
+*.tar.gz.1
+backup/
+zerobubble/zb_sample_dataset/

@@ -9,43 +9,37 @@ DIR=`pwd`
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 mkdir -p $DIR/logs
 
-if [ -z $ALIBABA_CLUSTER ]; then
-  DATASET="/tmp/zb_sample_dataset/dataset/c4_text_document"
-  TOKENIZER_MODEL="/tmp/zb_sample_dataset/tokenizers/tokenizer.model"
-else
-  DATASET="/data/oss_bucket_0/zb_dataset/dataset/c4_text_document"
-  TOKENIZER_MODEL="/data/oss_bucket_0/zb_dataset/tokenizers/tokenizer.model"
-fi
+DATASET="/root/workspace/test-varuna/zerobubble/zb_sample_dataset/dataset/c4_text_document"
 
 if [ ! -e "$DATASET"".idx" ]; then
   wget https://huggingface.co/datasets/ufotalent/zero_bubble_sample_dataset/resolve/main/zb_sample_dataset.tar.gz
-  tar -xvf zb_sample_dataset.tar.gz -C /tmp
+  tar -xvf zb_sample_dataset.tar.gz -C /root/workspace/test-varuna/zerobubble/
 fi
 
 # Running locally
 if [ -z "$WORLD_SIZE" ]; then
-  export WORLD_SIZE=1
-  export RANK=0
-  export MASTER_ADDR=localhost
-  export MASTER_PORT=20086
+  export WORLD_SIZE=4
+  export RANK=$NODERANK
+  export MASTER_ADDR=172.24.82.221
+  export MASTER_PORT=10086
 fi
 
 if [ -z "$GPUS_PER_NODE" ]; then
-  GPUS_PER_NODE=$(nvidia-smi --list-gpus | wc -l)
+  GPUS_PER_NODE=2
 fi
 
 if [ -z "$EXIT_INTERVAL" ]; then
   EXIT_INTERVAL=1000
 fi
 
-WORLD_SIZE_IN_GPUS=$(( $WORLD_SIZE * $GPUS_PER_NODE ))
+WORLD_SIZE_IN_GPUS=4
 
 if [ -z "$PIPELINE_SIZE" ]; then
   PIPELINE_SIZE=$(( $WORLD_SIZE_IN_GPUS))
   LAYERS=$(( $PIPELINE_SIZE * 4 - 2))
-  MICRO_BATCH_SIZE=1   # H800: 2
+  MICRO_BATCH_SIZE=1
   GLOBAL_BATCH_SIZE=$(( $PIPELINE_SIZE * 3 * $MICRO_BATCH_SIZE ))
-  HIDDEN_SIZE=4096  # H800: 6144
+  HIDDEN_SIZE=4096
   ATTENTION_HEADS=32
   ZERO_BUBBLE_MEM_LIMIT=$((2 * $PIPELINE_SIZE))
 fi
@@ -78,7 +72,7 @@ options=" \
   --max-position-embeddings 2048 \
   --micro-batch-size $MICRO_BATCH_SIZE \
   --global-batch-size $GLOBAL_BATCH_SIZE \
-  --train-samples 3600 \
+  --train-samples 360 \
   --lr-decay-samples 126953125 \
   --lr-warmup-samples 183105 \
   --lr 6.0e-5 \
@@ -89,7 +83,7 @@ options=" \
   --eval-interval $EVAL_INTERVAL \
   --data-path ${DATASET} \
   --tokenizer-type GPTSentencePieceTokenizer \
-  --tokenizer-model $TOKENIZER_MODEL \
+  --tokenizer-model /root/workspace/test-varuna/zerobubble/zb_sample_dataset/tokenizers/tokenizer.model \
   --split 98,2,0 \
   --clip-grad 8.0 \
   --weight-decay 0.1 \
@@ -120,9 +114,6 @@ if [ ! -z "$ENABLE_ZERO_BUBBLE" ]; then
   --zero-bubble-pipeline-timers-start-iter $ZERO_BUBBLE_TIMER_START \
   --zero-bubble-pipeline-timers-end-iter $ZERO_BUBBLE_TIMER_END \
   --zero-bubble-max-pending-backward $ZERO_BUBBLE_MEM_LIMIT"
-  # if [ -z "$FP32" ]; then
-  #   options="$options --enable-optimizer-post-validation"
-  # fi
 fi
 
 if [ ! -z "$ENABLE_EXACTLY_NUMERIC_MATCH" ]; then
@@ -135,7 +126,7 @@ if [ ! -z "$INTERLEAVED_1F1B" ]; then
   options="$options --num-layers-per-virtual-pipeline-stage 1"
 fi
 
-run_cmd="torchrun --nnodes $WORLD_SIZE \
+run_cmd="/root/miniconda3/bin/torchrun --nnodes $WORLD_SIZE \
   --node_rank $RANK \
   --master_addr $MASTER_ADDR \
   --master_port $MASTER_PORT \

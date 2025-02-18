@@ -460,8 +460,10 @@ def train_step(forward_step_func, data_iterator,
     if get_args().profile:
         torch.cuda.nvtx.range_push('Optimizer')
     if args.enable_zero_bubble and args.enable_optimizer_post_validation:
-        from megatron.core.pipeline_parallel.zb_schedules import get_zb_scheduler_instance
-        zb_scheduler = get_zb_scheduler_instance()
+        # from megatron.core.pipeline_parallel.zb_schedules import get_zb_scheduler_instance
+        # zb_scheduler = get_zb_scheduler_instance
+        from .core.pipeline_parallel.our_schedules import get_our_scheduler_instance
+        zb_scheduler = get_our_scheduler_instance()
         if optimizer.post_validation_enabled and not no_optimizer_post_validation:
             optimizer.pre_step(args, timers)
             zb_scheduler.optimizer = optimizer

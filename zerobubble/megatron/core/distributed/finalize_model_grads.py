@@ -46,8 +46,10 @@ def _allreduce_word_embedding_grads(model: List[torch.nn.Module], config: Transf
                 local_binary_reduction(grad.data, key=f"embedding_grads_{int(embedding_grad_counter // 2)}")
                 embedding_grad_counter += 1
             else:
-                handle = torch.distributed.all_reduce(grad, group=parallel_state.get_embedding_group(), async_op=async_op)
-                handles.append(handle)
+                pass
+                ###### MADOKA Madoka: This introduces a very very large overhead...
+                # handle = torch.distributed.all_reduce(grad, group=parallel_state.get_embedding_group(), async_op=async_op)
+                # handles.append(handle)
     return handles
 
 

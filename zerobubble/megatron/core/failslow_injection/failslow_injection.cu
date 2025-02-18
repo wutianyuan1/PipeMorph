@@ -7,26 +7,36 @@
 #include <dlfcn.h>
 #include <sys/time.h>
 #include <memory>
-#include "event_handler.h"
+// #include "event_handler.h"
+#include <iostream>
+#include <string>
+#include <vector>
+#include <tuple>
+#include <sstream>
 
 #define CHECK_INTERVAL 64
 #define RETRIEVE_NCCL_FUNC(func_name)\
     using func_t = typeof(func_name);\
     auto real_func = reinterpret_cast<func_t*>(dlsym(status->nccl_lib_handle, #func_name));
+#define COMM_SIZE 512
+#define N_STREAMS 32
+#define TILE_SIZE 1
 
 
 struct GlobalStatus {
     void* nccl_lib_handle;
     clock_t g_clock_rate = 0;
-    EventHandler* event_handler;
+    // EventHandler* event_handler;
     int recv_count = 0;
-    float sleep_time = 0.0f;
-    std::vector<std::tuple<int, int>> slow_links;
+    float sleep_time = 0.040;
+    std::tuple<int, int> slow_links {1, 2};
+    std::vector<cudaStream_t> stream_pool;
+    int stream_id;
+    float *d_A, *d_B, *d_C;
 };
 
 static bool sys_inited = false;
 static GlobalStatus* status;
-
 
 
 void init()
@@ -36,7 +46,11 @@ void init()
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0); 
     status->g_clock_rate = prop.clockRate;
-    status->event_handler = new EventHandler("localhost", 6379);
+    for (int i = 0; i < N_STREAMS; i++) {
+        cudaStream_t new_stream;
+        cudaStreamCreate(&new_stream);
+        status->stream_pool.push_back(new_stream);
+    }
     sys_inited = true;
 }
 
@@ -55,51 +69,23 @@ ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatyp
 {
     if (!sys_inited) init();
     RETRIEVE_NCCL_FUNC(ncclSend);
-    // printf("RANK%d send %ld bytes, type=%d\n", std::stoi(getenv("RANK")), count, datatype);
-    if (status->recv_count++ % CHECK_INTERVAL == 0) {
-        status->sleep_time = status->event_handler->get_sleep_time();
-        status->slow_links = status->event_handler->get_slow_links();
-    }
-    if (status->sleep_time != 0.0f && status->slow_links.size() != 0) {
-        int my_rank = std::stoi(getenv("RANK"));
-        for (const auto& [start, end] : status->slow_links) {
-            if ((my_rank == start && peer == end) || (my_rank == end && peer == start))
-                gpu_msleep<<<1, 1, 0, stream>>>(status->sleep_time * 1000.0 / 2.0, status->g_clock_rate);
-        }
-    }
-    using func_t = typeof(ncclSend);
-    auto ret = (*real_func)(sendbuff, count, datatype, peer, comm, stream);
-    return ret;
-}
-
-
-ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t datatype,
-                      int peer, ncclComm_t comm, cudaStream_t stream)
-{
-    if (!sys_inited) init();
-    RETRIEVE_NCCL_FUNC(ncclRecv);
-    // printf("RANK%d recv %ld bytes, peer=%d\n", std::stoi(getenv("RANK")), count, peer);
-    if (status->recv_count++ % CHECK_INTERVAL == 0) {
-        status->sleep_time = status->event_handler->get_sleep_time();
-        status->slow_links = status->event_handler->get_slow_links();
-    }
-    if (status->sleep_time != 0.0f && status->slow_links.size() != 0) {
-        int my_rank = std::stoi(getenv("RANK"));
-        for (const auto& [start, end] : status->slow_links) {
-            if ((my_rank == start && peer == end) || (my_rank == end && peer == start))
-                gpu_msleep<<<1, 1, 0, stream>>>(status->sleep_time * 1000.0 / 2.0, status->g_clock_rate);
-        }
-    }
-    auto ret = (*real_func)(recvbuff, count, datatype, peer, comm, stream);
-    return ret;
+    int my_rank = std::stoi(getenv("RANK"));
+    int peer_rank = peer;
+    if (peer == 0)
+        peer_rank = my_rank - 1;
+    else if (peer == 1)
+        peer_rank = my_rank + 1;
+    auto start = std::get<0>(status->slow_links);
+    auto end = std::get<1>(status->slow_links);
+    if ((my_rank == start && peer_rank == end) || (my_rank == end && peer_rank == start))
+        gpu_msleep<<<1, 1, 0, stream>>>(status->sleep_time * 1000.0, status->g_clock_rate);
+    return (*real_func)(sendbuff, count, datatype, peer, comm, stream);
 }
 
 
 ncclResult_t ncclGroupStart()
 {
     if (!sys_inited) init();
-    // if (std::stoi(getenv("RANK")) == 0)
-    //     printf("Group start");
     RETRIEVE_NCCL_FUNC(ncclGroupStart);
     return (*real_func)();
 }
@@ -108,8 +94,6 @@ ncclResult_t ncclGroupStart()
 ncclResult_t ncclGroupEnd()
 {
     if (!sys_inited) init();
-    // if (std::stoi(getenv("RANK")) == 0)
-    //     printf("Group end");
     RETRIEVE_NCCL_FUNC(ncclGroupEnd);
     return (*real_func)();
 }
