@@ -118,18 +118,23 @@ class CommunicationDelegate(mp.Process):
                     break
                 else:
                     for i in range(int(iter_task_mbs)):
-                        # tensor = self.task_queue.get()
-                        while True:
-                            signal = torch.from_numpy(np.ndarray((1,), np.float16, self.shm.buf[i * 2 : (i + 1) * 2]))
-                            if signal.item() == 1:
-                                signal[0] = 0
-                                tensor = torch.from_numpy(np.ndarray(self.dist_info['data_shape'], np.float16, self.shm.buf[24 + i * self.num_elements * 2 : 24 + (i + 1) * self.num_elements * 2]))
-                                break
-                        assert isinstance(tensor, torch.Tensor)
-                        # print(f"[{self.name} {self.pp_stage}] Get task {i}: {task}.")
-                        self.simulate_delay()
-                        dist.send(tensor, dst=1)
-                        # print(f"[{self.name} {self.pp_stage}] Successfully sent microbatch {i}.")
+                        if self.dist_info['ipc_way']['send_way'] == 'queue':
+                            tensor = self.task_queue.get()
+                            assert isinstance(tensor, torch.Tensor)
+                            # print(f"[{self.name} {self.pp_stage}] Get task {i}: {task}.")
+                            self.simulate_delay()
+                            dist.send(tensor, dst=1)
+                            # print(f"[{self.name} {self.pp_stage}] Successfully sent microbatch {i}.")
+                        else:
+                            while True:
+                                signal = torch.from_numpy(np.ndarray((1,), np.float16, self.shm.buf[i * 2 : (i + 1) * 2]))
+                                if signal.item() == 1:
+                                    signal[0] = 0
+                                    tensor = torch.from_numpy(np.ndarray(self.dist_info['data_shape'], np.float16, self.shm.buf[24 + i * self.num_elements * 2 : 24 + (i + 1) * self.num_elements * 2]))
+                                    break
+                            assert isinstance(tensor, torch.Tensor)
+                            self.simulate_delay()
+                            dist.send(tensor, dst=1)
                 iter_task_mbs = self.msg_queue.get()
 
         elif self.role == 'recver':
@@ -141,10 +146,17 @@ class CommunicationDelegate(mp.Process):
                     break
                 else:
                     for i in range(int(iter_task_mbs)):
-                        # print(f"[{self.name} {self.pp_stage}] Before recv {i}: buffershape: {self.recv_buffer[i].shape}.")
-                        dist.recv(self.recv_buffer[i], src=0)
-                        # print(f"[{self.name} {self.pp_stage}] Successfully received microbatch {i}.")
-                        self.task_queue.put(self.recv_buffer[i])
+                        if self.dist_info['ipc_way']['recv_way'] == 'queue':
+                            # print(f"[{self.name} {self.pp_stage}] Before recv {i}: buffershape: {self.recv_buffer[i].shape}.")
+                            dist.recv(self.recv_buffer[i], src=0)
+                            # print(f"[{self.name} {self.pp_stage}] Successfully received microbatch {i}.")
+                            self.task_queue.put(self.recv_buffer[i])
+                        else:
+                            tensor = torch.from_numpy(np.ndarray(self.dist_info['data_shape'], np.float16, self.shm.buf[24 + i * self.num_elements * 2 : 24 + (i + 1) * self.num_elements * 2]))
+                            dist.recv(tensor, src=0)
+                            # tensor.copy_(self.recv_buffer[i])
+                            signal = torch.from_numpy(np.ndarray((1,), np.float16, self.shm.buf[i * 2 : (i + 1) * 2]))
+                            signal[0] = 2
                 iter_task_mbs = self.msg_queue.get()
         dist.destroy_process_group()
         # print(f"[{self.name} {self.pp_stage}] Terminated!")
@@ -157,7 +169,7 @@ def start_communication_delegate(name, msg_queue, task_queue, shm, dist_info):
 
 
 class DelegateManager():
-    def __init__(self, my_stage, total_stages, my_addr, prev_addr, next_addr, dele_dshape, dele_dtype, num_delegates):
+    def __init__(self, my_stage, total_stages, my_addr, prev_addr, next_addr, dele_dshape, dele_dtype, num_delegates, ipc_way):
         '''
         Role(MASTER_ADDR, MASTER_PORT)
         Stage0: SF(0, 12306), SB(None), RF(None), RB(1, 12317)
@@ -167,7 +179,7 @@ class DelegateManager():
         '''
         # print("[DelegateManager] Init start.")
         mp.set_start_method('spawn', force=True)
-        dist_info = {"GLOBAL_RANK": dist.get_rank(), 'MASTER_ADDR': None, "MASTER_PORT": 12306, 'data_shape': dele_dshape, 'dtype': dele_dtype}
+        dist_info = {"GLOBAL_RANK": dist.get_rank(), 'MASTER_ADDR': None, "MASTER_PORT": 12306, 'data_shape': dele_dshape, 'dtype': dele_dtype, 'ipc_way': ipc_way}
         self.total_stages = total_stages
         self.my_stage = my_stage
         self.num_delegates = num_delegates
@@ -183,6 +195,7 @@ class DelegateManager():
                 self.queues[f'send_forward_msg_{qid}'] = mp.Queue()
                 self.queues[f'send_forward_task_{qid}'] = mp.Queue()
                 self.shms[f'send_forward_shm_{qid}'] = SharedMemory(create=True, size=2 * 12 * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                memcpy.register_pinned_memory(addr_of(self.shms[f'send_forward_shm_{qid}'].buf, 0), self.shms[f'send_forward_shm_{qid}'].size)
                 self.delegates[f'send_forward_{qid}'] = start_communication_delegate(f'SendForward{qid}', self.queues[f'send_forward_msg_{qid}'], self.queues[f'send_forward_task_{qid}'], self.shms[f'send_forward_shm_{qid}'], dist_info_send_forward)
 
         # (2) Create: send to the prev node (send_backward)
@@ -194,6 +207,7 @@ class DelegateManager():
                 self.queues[f'send_backward_msg_{qid}'] = mp.Queue()
                 self.queues[f'send_backward_task_{qid}'] = mp.Queue()
                 self.shms[f'send_backward_shm_{qid}'] = SharedMemory(create=True, size=2 * 12 * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                memcpy.register_pinned_memory(addr_of(self.shms[f'send_backward_shm_{qid}'].buf, 0), self.shms[f'send_backward_shm_{qid}'].size)
                 self.delegates[f'send_backward_{qid}'] = start_communication_delegate(f'SendBackward{qid}', self.queues[f'send_backward_msg_{qid}'], self.queues[f'send_backward_task_{qid}'], self.shms[f'send_backward_shm_{qid}'], dist_info_send_backward)
 
         # (3) Create: recv from the prev node (recv_forward)
@@ -204,8 +218,8 @@ class DelegateManager():
                 dist_info_recv_forward['MASTER_PORT'] = 12306 + qid
                 self.queues[f'recv_forward_msg_{qid}'] = mp.Queue()
                 self.queues[f'recv_forward_task_{qid}'] = mp.Queue()
-                # self.shms[f'recv_forward_shm_{qid}'] = SharedMemory(create=True, size=2 * 12 * torch.prod(torch.tensor(dele_dshape)).item())
-                self.shms[f'recv_forward_shm_{qid}'] = None
+                self.shms[f'recv_forward_shm_{qid}'] = SharedMemory(create=True, size=2 * 12 * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                memcpy.register_pinned_memory(addr_of(self.shms[f'recv_forward_shm_{qid}'].buf, 0), self.shms[f'recv_forward_shm_{qid}'].size)
                 self.delegates[f'recv_forward_{qid}'] = start_communication_delegate(f'RecvForward{qid}', self.queues[f'recv_forward_msg_{qid}'], self.queues[f'recv_forward_task_{qid}'], self.shms[f'recv_forward_shm_{qid}'], dist_info_recv_forward)
 
         # (4) Create: recv from the next node (recv_backward)
@@ -216,8 +230,8 @@ class DelegateManager():
                 dist_info_recv_backward['MASTER_PORT'] = 12317 + qid
                 self.queues[f'recv_backward_msg_{qid}'] = mp.Queue()
                 self.queues[f'recv_backward_task_{qid}'] = mp.Queue()
-                # self.shms[f'recv_backward_shm_{qid}'] = SharedMemory(create=True, size=2 * 12 * torch.prod(torch.tensor(dele_dshape)).item())
-                self.shms[f'recv_backward_shm_{qid}'] = None
+                self.shms[f'recv_backward_shm_{qid}'] = SharedMemory(create=True, size=2 * 12 * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                memcpy.register_pinned_memory(addr_of(self.shms[f'recv_backward_shm_{qid}'].buf, 0), self.shms[f'recv_backward_shm_{qid}'].size)
                 self.delegates[f'recv_backward_{qid}'] = start_communication_delegate(f'RecvBackward{qid}', self.queues[f'recv_backward_msg_{qid}'], self.queues[f'recv_backward_task_{qid}'], self.shms[f'recv_backward_shm_{qid}'], dist_info_recv_backward)
 
         # print("[DelegateManager] Init Wait.")
@@ -237,6 +251,12 @@ class DelegateManager():
         assert num_mbs % self.num_delegates == 0
         # Round robin assignment
         num_mbs = num_mbs // self.num_delegates
+        for shm in self.shms.values():
+            if shm is not None:
+                # reset all signals
+                for i in range(num_mbs):
+                    signal = torch.from_numpy(np.ndarray((1,), np.float16, shm.buf[i * 2 : (i + 1) * 2]))
+                    signal[0] = 0
         for i in range(self.num_delegates):
             if self.my_stage != self.total_stages - 1:
                 self.queues[f'send_forward_msg_{i}'].put(num_mbs)

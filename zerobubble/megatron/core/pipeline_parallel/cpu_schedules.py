@@ -7,6 +7,7 @@ import torch
 import torch.distributed
 import torch.cuda.nvtx as nvtx
 import memcpy
+import numpy as np
 
 from typing import Iterator, List, Union
 from megatron import core, get_num_microbatches, print_rank_0
@@ -26,6 +27,8 @@ from megatron.core.pipeline_parallel.cpu_delegate import DelegateManager, addr_o
 
 AUTO_SCHEDULE_COMMUNICATION_TYPES = {'RECV_FORWARD', 'RECV_BACKWARD', 'SEND_FORWARD', 'SEND_BACKWARD'}
 PREALLOC_BUFFER_SIZE = 32
+SEND_WAY = 'shm'
+RECV_WAY = 'queue'
 
 log_file = None
 timer_sync = True
@@ -93,7 +96,31 @@ class OurScheduler:
         if core.parallel_state.is_pipeline_first_stage():
             input_tensor = [None] * len(self.recv_tensor_shapes)
         else:
-            input_tensor = [self.delegate_manager.queues[f'recv_forward_task_{delegate_id}'].get().cuda().requires_grad_()]
+            if RECV_WAY == 'queue':
+                input_tensor = [self.delegate_manager.queues[f'recv_forward_task_{delegate_id}'].get().cuda().requires_grad_()]
+            else:
+                shm = self.delegate_manager.shms[f'recv_forward_shm_{delegate_id}']
+                idx = op_id // self.delegate_manager.num_delegates
+                while True:
+                    signal = torch.from_numpy(np.ndarray((1,), np.float16, shm.buf[idx * 2 : (idx + 1) * 2]))
+                    if signal.item() == 2:
+                        signal[0] = 3
+                        break
+                cpu_tensor_addr = addr_of(shm.buf, 24 + idx * self.data_size)
+                memcpy.cudaH2DAsync(cpu_tensor_addr, self.rf_tensors[op_id], self.data_size)
+                cpu_signal_addr = addr_of(shm.buf, idx * 2)
+                memcpy.cudaH2DAsync(cpu_signal_addr, self.rf_signals[op_id], 2)
+                cpu_signal = torch.from_numpy(np.ndarray((1,), np.float16, shm.buf[idx * 2 : (idx + 1) * 2]))
+                while True:
+                    if self.rf_signals[op_id].item() == 3:
+                        self.rf_signals[op_id][0] = 0
+                        cpu_signal[0] = 0
+                        break
+                input_tensor = [self.rf_tensors[op_id]]
+                # cpu_tensor = torch.from_numpy(np.ndarray(self.send_tensor_shapes[0], np.float16, shm.buf[24 + idx * self.data_size : 24 + (idx + 1) * self.data_size]))
+                # input_tensor = [cpu_tensor.cuda().requires_grad_()]
+            if self.stage == 3:
+                print(f"f{op_id}: {input_tensor[0].sum()}")
             assert torch.sum(input_tensor[0]) != 111.111
         with torch.cuda.stream(self.comp_stream):
             timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
@@ -111,16 +138,18 @@ class OurScheduler:
                 )
             self.timer.end(timer_id, "F")
         if not core.parallel_state.is_pipeline_last_stage():
-            # self.delegate_manager.queues[f'send_forward_task_{delegate_id}'].put(output_tensor[0].detach().cpu())
-            shm = self.delegate_manager.shms[f'send_forward_shm_{delegate_id}']
-            idx = op_id // self.delegate_manager.num_delegates
-            cpu_tensor_addr = addr_of(shm.buf, 24 + idx * self.data_size)
-            memcpy.cudaD2HAsync(output_tensor[0].detach(), cpu_tensor_addr, self.data_size)
-            cpu_signal_addr = addr_of(shm.buf, idx * 2)
-            if self.stage == 2:
-                print(f"f{op_id} signal @ buffer {delegate_id}'s slot {idx}")
-            signal = torch.tensor((1), dtype=torch.float16, device=torch.cuda.current_device())
-            memcpy.cudaD2HAsync(signal, cpu_signal_addr, 2)
+            if SEND_WAY == 'queue':
+                self.delegate_manager.queues[f'send_forward_task_{delegate_id}'].put(output_tensor[0].detach().cpu())
+            else:
+                shm = self.delegate_manager.shms[f'send_forward_shm_{delegate_id}']
+                idx = op_id // self.delegate_manager.num_delegates
+                cpu_tensor_addr = addr_of(shm.buf, 24 + idx * self.data_size)
+                memcpy.cudaD2HAsync(output_tensor[0].detach(), cpu_tensor_addr, self.data_size)
+                cpu_signal_addr = addr_of(shm.buf, idx * 2)
+                if self.stage == 2:
+                    print(f"f{op_id} signal @ buffer {delegate_id}'s slot {idx}: {output_tensor[0].detach().sum()}")
+                signal = torch.tensor((1), dtype=torch.float16, device=torch.cuda.current_device())
+                memcpy.cudaD2HAsync(signal, cpu_signal_addr, 2)
         if not self.forward_only:
             self.input_tensors.append(input_tensor)
             self.output_tensors.append(output_tensor)
@@ -138,8 +167,32 @@ class OurScheduler:
                 # Keep the original behavior when we do a dummy communication
                 output_tensor_grad = [None] * len(self.send_tensor_shapes)
             else:
-                x = self.delegate_manager.queues[f'recv_backward_task_{delegate_id}'].get()
-                output_tensor_grad = [x.cuda().requires_grad_()]
+                if RECV_WAY == 'queue':
+                    x = self.delegate_manager.queues[f'recv_backward_task_{delegate_id}'].get()
+                    output_tensor_grad = [x.cuda().requires_grad_()]
+                else:
+                    shm = self.delegate_manager.shms[f'recv_backward_shm_{delegate_id}']
+                    idx = op_id // self.delegate_manager.num_delegates
+                    while True:
+                        signal = torch.from_numpy(np.ndarray((1,), np.float16, shm.buf[idx * 2 : (idx + 1) * 2]))
+                        if signal.item() == 2:
+                            signal[0] = 3
+                            break
+                    cpu_tensor_addr = addr_of(shm.buf, 24 + idx * self.data_size)
+                    memcpy.cudaH2DAsync(cpu_tensor_addr, self.rb_tensors[op_id], self.data_size)
+                    cpu_signal_addr = addr_of(shm.buf, idx * 2)
+                    memcpy.cudaH2DAsync(cpu_signal_addr, self.rb_signals[op_id], 2)
+                    cpu_signal = torch.from_numpy(np.ndarray((1,), np.float16, shm.buf[idx * 2 : (idx + 1) * 2]))
+                    while True:
+                        if self.rb_signals[op_id].item() == 3:
+                            self.rb_signals[op_id][0] = 0
+                            cpu_signal[0] = 0
+                            break
+                    output_tensor_grad = [self.rb_tensors[op_id]]
+                    # cpu_tensor = torch.from_numpy(np.ndarray(self.send_tensor_shapes[0], np.float16, shm.buf[24 + idx * self.data_size : 24 + (idx + 1) * self.data_size]))
+                    # output_tensor_grad = [cpu_tensor.cuda().requires_grad_()]
+                if self.stage == 1:
+                    print(f"b{op_id}: {output_tensor_grad[0].sum()}")
                 assert torch.sum(output_tensor_grad[0]) != 111.111
 
             with torch.cuda.stream(self.comp_stream):
@@ -151,16 +204,18 @@ class OurScheduler:
                     )
                 self.timer.end(timer_id, "B")
             if not parallel_state.is_pipeline_first_stage():
-                # self.delegate_manager.queues[f'send_backward_task_{delegate_id}'].put(input_tensor_grad[0].detach().cpu())
-                shm = self.delegate_manager.shms[f'send_backward_shm_{delegate_id}']
-                idx = op_id // self.delegate_manager.num_delegates
-                cpu_tensor_addr = addr_of(shm.buf, 24 + idx * self.data_size)
-                memcpy.cudaD2HAsync(input_tensor_grad[0].detach(), cpu_tensor_addr, self.data_size)
-                cpu_signal_addr = addr_of(shm.buf, idx * 2)
-                if self.stage == 2:
-                    print(f"b{op_id} signal @ buffer {delegate_id}'s slot {idx}")
-                signal = torch.tensor((1), dtype=torch.float16, device=torch.cuda.current_device())
-                memcpy.cudaD2HAsync(signal, cpu_signal_addr, 2)
+                if SEND_WAY == 'queue':
+                    self.delegate_manager.queues[f'send_backward_task_{delegate_id}'].put(input_tensor_grad[0].detach().cpu())
+                else:    
+                    shm = self.delegate_manager.shms[f'send_backward_shm_{delegate_id}']
+                    idx = op_id // self.delegate_manager.num_delegates
+                    cpu_tensor_addr = addr_of(shm.buf, 24 + idx * self.data_size)
+                    memcpy.cudaD2HAsync(input_tensor_grad[0].detach(), cpu_tensor_addr, self.data_size)
+                    cpu_signal_addr = addr_of(shm.buf, idx * 2)
+                    if self.stage == 2:
+                        print(f"b{op_id} signal @ buffer {delegate_id}'s slot {idx}: {input_tensor_grad[0].detach().sum()}")
+                    signal = torch.tensor((1), dtype=torch.float16, device=torch.cuda.current_device())
+                    memcpy.cudaD2HAsync(signal, cpu_signal_addr, 2)
             WeightGradStore.flush()
 
     def schedule_w(self, scheduled_node: ScheduledNode, non_w_pending: bool):
@@ -265,9 +320,25 @@ class OurScheduler:
         my_ip = ip_list[my_rank]
         prev_ip = ip_list[my_rank - 1] if my_rank != 0 else None
         next_ip = ip_list[my_rank + 1] if my_rank != self.num_stages - 1 else None
-        self.delegate_manager = DelegateManager(my_rank, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=3)
+        self.delegate_manager = DelegateManager(my_rank, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=3, ipc_way={'send_way': SEND_WAY, 'recv_way': RECV_WAY})
+        assert send_tensor_shapes[0] == recv_tensor_shapes[0]
         self.data_size = torch.prod(torch.tensor(send_tensor_shapes[0])).item() * 2
-        print("Data size:", send_tensor_shapes[0], self.data_size)
+        if not core.parallel_state.is_pipeline_first_stage():
+            self.rf_tensors = [torch.zeros(
+                    self.send_tensor_shapes[0],
+                    requires_grad=True,
+                    device=torch.cuda.current_device(),
+                    dtype=self.config.pipeline_dtype,
+                ) for _ in range(self.num_microbatches)]
+            self.rf_signals = [torch.zeros((1,), device=torch.cuda.current_device(), dtype=self.config.pipeline_dtype) for _ in range(self.num_microbatches)]
+        if not core.parallel_state.is_pipeline_last_stage():
+            self.rb_tensors = [torch.zeros(
+                    self.send_tensor_shapes[0],
+                    requires_grad=True,
+                    device=torch.cuda.current_device(),
+                    dtype=self.config.pipeline_dtype,
+                ) for _ in range(self.num_microbatches)]
+            self.rb_signals = [torch.zeros((1,), device=torch.cuda.current_device(), dtype=self.config.pipeline_dtype) for _ in range(self.num_microbatches)]
 
     def run(self):
         # Add a sync here
@@ -277,7 +348,7 @@ class OurScheduler:
         self.disable_grad_sync()
         self.iter_cnt += 1
         # Now, only run MAXITERS iterations for testing and record the last iter's performance
-        MAXITERS = 10
+        MAXITERS = 20
         global log_file
         if self.iter_cnt == MAXITERS:
             self.delegate_manager.terminate()
