@@ -10,10 +10,24 @@ import memcpy
 from multiprocessing.shared_memory import SharedMemory
 
 CHECK_INTERVAL = 8
+FLOAT16_NBYTES = 2
+UNREADY_SIGNAL = 0
+SEND_SIGNAL = 1
+RECV_SIGNAL_CPU = 2
+RECV_SIGNAL_GPU = 3
 
 
 def addr_of(buffer, offset):
     return ctypes.addressof(ctypes.c_char.from_buffer(buffer, offset))
+
+def get_shm_signal(buffer, index):
+    return torch.from_numpy(np.ndarray((1,), np.float16, buffer[index * FLOAT16_NBYTES : (index + 1) * FLOAT16_NBYTES]))
+
+def get_shm_tensor(buffer, index, num_microbatches, tensor_shape, tensor_numel):
+    signals_size = num_microbatches * FLOAT16_NBYTES
+    tensor_size = tensor_numel * FLOAT16_NBYTES
+    return torch.from_numpy(np.ndarray(tensor_shape, np.float16, buffer[signals_size + index * tensor_size : signals_size + (index + 1) * tensor_size]))
+
 
 class CommunicationDelegate(mp.Process):
     def __init__(self, name, msg_queue, task_queue, shm, dist_info):
@@ -127,10 +141,10 @@ class CommunicationDelegate(mp.Process):
                             # print(f"[{self.name} {self.pp_stage}] Successfully sent microbatch {i}.")
                         else:
                             while True:
-                                signal = torch.from_numpy(np.ndarray((1,), np.float16, self.shm.buf[i * 2 : (i + 1) * 2]))
-                                if signal.item() == 1:
-                                    signal[0] = 0
-                                    tensor = torch.from_numpy(np.ndarray(self.dist_info['data_shape'], np.float16, self.shm.buf[24 + i * self.num_elements * 2 : 24 + (i + 1) * self.num_elements * 2]))
+                                signal = get_shm_signal(self.shm.buf, i)
+                                if signal.item() == SEND_SIGNAL:
+                                    signal[0] = UNREADY_SIGNAL
+                                    tensor = get_shm_tensor(self.shm.buf, i, self.dist_info['num_mb'], self.dist_info['data_shape'], self.num_elements)
                                     break
                             assert isinstance(tensor, torch.Tensor)
                             self.simulate_delay()
@@ -152,11 +166,10 @@ class CommunicationDelegate(mp.Process):
                             # print(f"[{self.name} {self.pp_stage}] Successfully received microbatch {i}.")
                             self.task_queue.put(self.recv_buffer[i])
                         else:
-                            tensor = torch.from_numpy(np.ndarray(self.dist_info['data_shape'], np.float16, self.shm.buf[24 + i * self.num_elements * 2 : 24 + (i + 1) * self.num_elements * 2]))
+                            tensor = get_shm_tensor(self.shm.buf, i, self.dist_info['num_mb'], self.dist_info['data_shape'], self.num_elements)
                             dist.recv(tensor, src=0)
-                            # tensor.copy_(self.recv_buffer[i])
-                            signal = torch.from_numpy(np.ndarray((1,), np.float16, self.shm.buf[i * 2 : (i + 1) * 2]))
-                            signal[0] = 2
+                            signal = get_shm_signal(self.shm.buf, i)
+                            signal[0] = RECV_SIGNAL_CPU
                 iter_task_mbs = self.msg_queue.get()
         dist.destroy_process_group()
         # print(f"[{self.name} {self.pp_stage}] Terminated!")
@@ -169,7 +182,7 @@ def start_communication_delegate(name, msg_queue, task_queue, shm, dist_info):
 
 
 class DelegateManager():
-    def __init__(self, my_stage, total_stages, my_addr, prev_addr, next_addr, dele_dshape, dele_dtype, num_delegates, ipc_way):
+    def __init__(self, my_stage, total_stages, my_addr, prev_addr, next_addr, dele_dshape, dele_dtype, num_delegates, ipc_way, num_microbatches):
         '''
         Role(MASTER_ADDR, MASTER_PORT)
         Stage0: SF(0, 12306), SB(None), RF(None), RB(1, 12317)
@@ -179,7 +192,7 @@ class DelegateManager():
         '''
         # print("[DelegateManager] Init start.")
         mp.set_start_method('spawn', force=True)
-        dist_info = {"GLOBAL_RANK": dist.get_rank(), 'MASTER_ADDR': None, "MASTER_PORT": 12306, 'data_shape': dele_dshape, 'dtype': dele_dtype, 'ipc_way': ipc_way}
+        dist_info = {"GLOBAL_RANK": dist.get_rank(), 'MASTER_ADDR': None, "MASTER_PORT": 12306, 'data_shape': dele_dshape, 'dtype': dele_dtype, 'ipc_way': ipc_way, 'num_mb': num_microbatches}
         self.total_stages = total_stages
         self.my_stage = my_stage
         self.num_delegates = num_delegates
