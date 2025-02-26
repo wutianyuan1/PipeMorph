@@ -4,8 +4,8 @@ import matplotlib.patches as patches
 from dataclasses import dataclass
 from typing import List, Tuple, Dict
 from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
-from pipeline_simulator.batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTORS
-from pipeline_simulator.policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, OurPolicy, FixedPolicy
+from pipeline_simulator.batches import update_times
+from pipeline_simulator.policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, OurPolicy, FixedPolicy, ZeroBubblePolicy
 
 
 @dataclass(eq=True, frozen=True)
@@ -149,16 +149,19 @@ class PipelineSimulator(object):
         return graph_complete_ts.tolist()
 
     def plot(self) -> None:
+        from pipeline_simulator.batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTORS
         plt.figure(figsize=(10, 3))
         ax = plt.subplot(111)
         maxt = 0
         for i in range(self.num_stages):
             for j in range(len(self.history_queues[i])):
                 batch = self.history_queues[i][j]
+                print(self.history_queues[i][j].execution_begin - self.history_queues[i][j-1].execution_begin)
                 batch.plot(ax, self.num_stages - i - 1, 1)
                 maxt = max(maxt, batch.execution_begin + batch.execution_time)
-        normal_stage_total = sum([(batches.BACKWARD_TIMES[i] + batches.FORWARD_TIMES[i]) * self.num_batches for i in range(self.num_stages) if i not in self.slow_stages])
-        slow_stage_total = sum([(batches.BACKWARD_TIMES[i] + batches.FORWARD_TIMES[i]) * self.num_batches * batches.SLOW_FACTORS[i] for i in range(self.num_stages) if i in self.slow_stages])
+        print(FORWARD_TIMES, BACKWARD_TIMES)
+        normal_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches for i in range(self.num_stages) if i not in self.slow_stages])
+        slow_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches * SLOW_FACTORS[i] for i in range(self.num_stages) if i in self.slow_stages])
         usage = (normal_stage_total + slow_stage_total) / (maxt * self.num_stages)
         rect = patches.Rectangle((0, 0), maxt, self.num_stages, linewidth=1, edgecolor='black', facecolor='#F2F2F2', zorder=0)
         ax.add_patch(rect)
@@ -166,6 +169,14 @@ class PipelineSimulator(object):
         ax.set_xlim(0, maxt)
         ax.set_ylim(0, self.num_stages)
         ax.set_yticks(np.arange(self.num_stages) + 0.5, [f"Stage {i}" for i in range(self.num_stages - 1, -1, -1)])
+
+    def get_iter_time(self) -> float:
+        maxt = 0
+        for i in range(self.num_stages):
+            for j in range(len(self.history_queues[i])):
+                batch = self.history_queues[i][j]
+                maxt = max(maxt, batch.execution_begin + batch.execution_time)
+        return maxt
 
     def to_text(self, fn: str = None):
         with open(fn, 'w') as f:
@@ -186,26 +197,68 @@ class PipelineSimulator(object):
                 schedule += " ".join([repr(j) for j in self.history_queues[i]]) + '\n'
             return schedule
 
+def calc_delta_x(filename):
+    with open(filename, 'r') as f:
+        content = f.read().split("\n")
+    xs = []
+    for line in content:
+        xi = 0
+        if len(line) == 0:
+            continue
+        for op in line.split(" "):
+            if op[0] == 'F':
+                xi += 1
+            else:
+                break
+        xs.append(xi)
+    return np.array(xs[:-1]) - np.array(xs[1:])
+
 
 def main() -> None:
-    num_stages, num_batches = 4, 12
-    # Please comment out the unused policies
-    # policy = PipeDreamPolicy(num_stages)
-    # policy = LearnedPolicy(num_stages, num_batches)
-    # policy = GpipePolicy()
-    # policy = ZeroBubblePolicy(num_stages)
-    policy = FixedPolicy(num_stages, "./pipeline_simulator/originalzb.txt")
-    comm_delay = {
-        (0, 1): 100,
-    }
-    simulator = PipelineSimulator(num_stages, num_batches, policy, [], comm_delay, True)
+    num_stages, num_batches = 2, 30
+    update_times([10]*num_stages, [10]*num_stages, [10]*num_stages, [1]*num_stages)
+    # comm_delay = {(0, 1): 30}
+    # for slow_link in [(i, i + 1) for i in range(7)]:
+    plt.figure(figsize=(7, 2.5))
+    ls = ['-x', '-o', '-v', '-d', '-D']
+    lsid = 0
+    policy = OurPolicy(num_stages)
+    simulator = PipelineSimulator(num_stages, num_batches, policy, [], {}, True)
     simulator.simulate()
-    schedule = simulator.gen_schedule_graph_no_comm()
-    # print(schedule)
-    simulator.plot()
-    # simulator.export("./originalzb.txt")
-    plt.show()
-    # plt.savefig("test11.png")
+    health_time = simulator.get_iter_time()
+
+    for sched_delay in range(0, 25, 5):
+        print(sched_delay)
+        policy = OurPolicy(num_stages)
+        simulator = PipelineSimulator(num_stages, num_batches, policy, [], {(0, 1): sched_delay}, True)
+        simulator.simulate()
+        simulator.export("./originalzb.txt")
+        iter_times = []
+        for delay_time in range(0, 55, 2):
+            comm_delay = {(0, 1): delay_time}
+            policy = FixedPolicy(num_stages, "./originalzb.txt")
+            simulator = PipelineSimulator(num_stages, num_batches, policy, [], comm_delay, True)
+            simulator.simulate()
+            iter_time = simulator.get_iter_time()
+            iter_times.append(iter_time)
+        maxdx = np.max(calc_delta_x("./originalzb.txt"))
+        plt.plot(list(range(0, 55, 2)), np.array(iter_times) - health_time, ls[lsid] ,label=f"$\Delta_i$={maxdx}")
+        lsid += 1
+        # print(iter_times)
+    plt.legend()
+    plt.xlabel(r"Communication Delay $c_i$ (ms)", fontdict={"fontsize": 14})
+    plt.ylabel("Accumulated\nDelay (ms)", fontdict={"fontsize": 14})
+    plt.grid(linestyle='-.')
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.tight_layout()
+    plt.savefig("simudelay.pdf")
+
+    # policy = FixedPolicy(num_stages, "./originalzb.txt")
+    # simulator = PipelineSimulator(num_stages, num_batches, policy, [], comm_delay, True)
+    # simulator.simulate()
+    # simulator.plot()
+    # plt.show()
 
 
 if __name__ == '__main__':
