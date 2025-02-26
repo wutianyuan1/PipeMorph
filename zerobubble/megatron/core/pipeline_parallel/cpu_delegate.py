@@ -4,12 +4,33 @@ import os
 import redis
 import torch.distributed as dist
 import torch.multiprocessing as mp
+import numpy as np
+import ctypes
+import memcpy
+from multiprocessing.shared_memory import SharedMemory
 
 CHECK_INTERVAL = 8
+FLOAT16_NBYTES = 2
+UNREADY_SIGNAL = 0
+SEND_SIGNAL = 1
+RECV_SIGNAL_CPU = 2
+RECV_SIGNAL_GPU = 3
+
+
+def addr_of(buffer, offset):
+    return ctypes.addressof(ctypes.c_char.from_buffer(buffer, offset))
+
+def get_shm_signal(buffer, index):
+    return torch.from_numpy(np.ndarray((1,), np.float16, buffer[index * FLOAT16_NBYTES : (index + 1) * FLOAT16_NBYTES]))
+
+def get_shm_tensor(buffer, index, num_microbatches, tensor_shape, tensor_numel):
+    signals_size = num_microbatches * FLOAT16_NBYTES
+    tensor_size = tensor_numel * FLOAT16_NBYTES
+    return torch.from_numpy(np.ndarray(tensor_shape, np.float16, buffer[signals_size + index * tensor_size : signals_size + (index + 1) * tensor_size]))
 
 
 class CommunicationDelegate(mp.Process):
-    def __init__(self, name, msg_queue, task_queue, dist_info):
+    def __init__(self, name, msg_queue, task_queue, shm, dist_info):
         super().__init__()
         self.role = 'sender' if 'Send' in name else 'recver'
         self.name = name
@@ -17,6 +38,9 @@ class CommunicationDelegate(mp.Process):
         # if role == sender, then it pulls from the task_queue and send data to recver
         # if role == recver, then it recvs data and put results to the task_queue
         self.task_queue = task_queue
+        self.shm = shm
+        self.index = 0
+        self.num_elements = torch.prod(torch.tensor((dist_info['data_shape']))).item()
         self.dist_info = dist_info
         self.pp_stage = self.dist_info['GLOBAL_RANK']
         if self.role == 'recver':
@@ -108,14 +132,23 @@ class CommunicationDelegate(mp.Process):
                     break
                 else:
                     for i in range(int(iter_task_mbs)):
-                        task = self.task_queue.get()
-                        if task is None:
-                            continue
-                        assert isinstance(task, torch.Tensor)
-                        # print(f"[{self.name} {self.pp_stage}] Get task {i}: {task}.")
-                        self.simulate_delay()
-                        dist.send(task, dst=1)
-                        # print(f"[{self.name} {self.pp_stage}] Successfully sent microbatch {i}.")
+                        if self.dist_info['ipc_way']['send_way'] == 'queue':
+                            tensor = self.task_queue.get()
+                            assert isinstance(tensor, torch.Tensor)
+                            # print(f"[{self.name} {self.pp_stage}] Get task {i}: {task}.")
+                            self.simulate_delay()
+                            dist.send(tensor, dst=1)
+                            # print(f"[{self.name} {self.pp_stage}] Successfully sent microbatch {i}.")
+                        else:
+                            while True:
+                                signal = get_shm_signal(self.shm.buf, i)
+                                if signal.item() == SEND_SIGNAL:
+                                    signal[0] = UNREADY_SIGNAL
+                                    tensor = get_shm_tensor(self.shm.buf, i, self.dist_info['num_mb'], self.dist_info['data_shape'], self.num_elements)
+                                    break
+                            assert isinstance(tensor, torch.Tensor)
+                            self.simulate_delay()
+                            dist.send(tensor, dst=1)
                 iter_task_mbs = self.msg_queue.get()
 
         elif self.role == 'recver':
@@ -127,23 +160,29 @@ class CommunicationDelegate(mp.Process):
                     break
                 else:
                     for i in range(int(iter_task_mbs)):
-                        # print(f"[{self.name} {self.pp_stage}] Before recv {i}: buffershape: {self.recv_buffer[i].shape}.")
-                        dist.recv(self.recv_buffer[i], src=0)
-                        # print(f"[{self.name} {self.pp_stage}] Successfully received microbatch {i}.")
-                        self.task_queue.put(self.recv_buffer[i])
+                        if self.dist_info['ipc_way']['recv_way'] == 'queue':
+                            # print(f"[{self.name} {self.pp_stage}] Before recv {i}: buffershape: {self.recv_buffer[i].shape}.")
+                            dist.recv(self.recv_buffer[i], src=0)
+                            # print(f"[{self.name} {self.pp_stage}] Successfully received microbatch {i}.")
+                            self.task_queue.put(self.recv_buffer[i])
+                        else:
+                            tensor = get_shm_tensor(self.shm.buf, i, self.dist_info['num_mb'], self.dist_info['data_shape'], self.num_elements)
+                            dist.recv(tensor, src=0)
+                            signal = get_shm_signal(self.shm.buf, i)
+                            signal[0] = RECV_SIGNAL_CPU
                 iter_task_mbs = self.msg_queue.get()
         dist.destroy_process_group()
         # print(f"[{self.name} {self.pp_stage}] Terminated!")
 
 
-def start_communication_delegate(name, msg_queue, task_queue, dist_info):
-    delegate = CommunicationDelegate(name, msg_queue, task_queue, dist_info)
+def start_communication_delegate(name, msg_queue, task_queue, shm, dist_info):
+    delegate = CommunicationDelegate(name, msg_queue, task_queue, shm, dist_info)
     delegate.start()
     return delegate
 
 
 class DelegateManager():
-    def __init__(self, my_stage, total_stages, my_addr, prev_addr, next_addr, dele_dshape, dele_dtype, num_delegates):
+    def __init__(self, my_stage, total_stages, my_addr, prev_addr, next_addr, dele_dshape, dele_dtype, num_delegates, ipc_way, num_microbatches):
         '''
         Role(MASTER_ADDR, MASTER_PORT)
         Stage0: SF(0, 12306), SB(None), RF(None), RB(1, 12317)
@@ -153,11 +192,12 @@ class DelegateManager():
         '''
         # print("[DelegateManager] Init start.")
         mp.set_start_method('spawn', force=True)
-        dist_info = {"GLOBAL_RANK": dist.get_rank(), 'MASTER_ADDR': None, "MASTER_PORT": 12306, 'data_shape': dele_dshape, 'dtype': dele_dtype}
+        dist_info = {"GLOBAL_RANK": dist.get_rank(), 'MASTER_ADDR': None, "MASTER_PORT": 12306, 'data_shape': dele_dshape, 'dtype': dele_dtype, 'ipc_way': ipc_way, 'num_mb': num_microbatches}
         self.total_stages = total_stages
         self.my_stage = my_stage
         self.num_delegates = num_delegates
         self.queues = {}
+        self.shms = {}
         self.delegates = {}
         # (1) Create: send to the next node (send_forward)
         if my_stage != total_stages - 1:  # not the last PP stage
@@ -167,7 +207,9 @@ class DelegateManager():
                 dist_info_send_forward['MASTER_PORT'] = 12306 + qid
                 self.queues[f'send_forward_msg_{qid}'] = mp.Queue()
                 self.queues[f'send_forward_task_{qid}'] = mp.Queue()
-                self.delegates[f'send_forward_{qid}'] = start_communication_delegate(f'SendForward{qid}', self.queues[f'send_forward_msg_{qid}'], self.queues[f'send_forward_task_{qid}'], dist_info_send_forward)
+                self.shms[f'send_forward_shm_{qid}'] = SharedMemory(create=True, size=2 * 12 * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                memcpy.register_pinned_memory(addr_of(self.shms[f'send_forward_shm_{qid}'].buf, 0), self.shms[f'send_forward_shm_{qid}'].size)
+                self.delegates[f'send_forward_{qid}'] = start_communication_delegate(f'SendForward{qid}', self.queues[f'send_forward_msg_{qid}'], self.queues[f'send_forward_task_{qid}'], self.shms[f'send_forward_shm_{qid}'], dist_info_send_forward)
 
         # (2) Create: send to the prev node (send_backward)
         if my_stage != 0:  # not the first PP stage
@@ -177,7 +219,9 @@ class DelegateManager():
                 dist_info_send_backward['MASTER_PORT'] = 12317 + qid
                 self.queues[f'send_backward_msg_{qid}'] = mp.Queue()
                 self.queues[f'send_backward_task_{qid}'] = mp.Queue()
-                self.delegates[f'send_backward_{qid}'] = start_communication_delegate(f'SendBackward{qid}', self.queues[f'send_backward_msg_{qid}'], self.queues[f'send_backward_task_{qid}'], dist_info_send_backward)
+                self.shms[f'send_backward_shm_{qid}'] = SharedMemory(create=True, size=2 * 12 * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                memcpy.register_pinned_memory(addr_of(self.shms[f'send_backward_shm_{qid}'].buf, 0), self.shms[f'send_backward_shm_{qid}'].size)
+                self.delegates[f'send_backward_{qid}'] = start_communication_delegate(f'SendBackward{qid}', self.queues[f'send_backward_msg_{qid}'], self.queues[f'send_backward_task_{qid}'], self.shms[f'send_backward_shm_{qid}'], dist_info_send_backward)
 
         # (3) Create: recv from the prev node (recv_forward)
         if my_stage != 0:  # not the first PP stage
@@ -187,7 +231,9 @@ class DelegateManager():
                 dist_info_recv_forward['MASTER_PORT'] = 12306 + qid
                 self.queues[f'recv_forward_msg_{qid}'] = mp.Queue()
                 self.queues[f'recv_forward_task_{qid}'] = mp.Queue()
-                self.delegates[f'recv_forward_{qid}'] = start_communication_delegate(f'RecvForward{qid}', self.queues[f'recv_forward_msg_{qid}'], self.queues[f'recv_forward_task_{qid}'], dist_info_recv_forward)
+                self.shms[f'recv_forward_shm_{qid}'] = SharedMemory(create=True, size=2 * 12 * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                memcpy.register_pinned_memory(addr_of(self.shms[f'recv_forward_shm_{qid}'].buf, 0), self.shms[f'recv_forward_shm_{qid}'].size)
+                self.delegates[f'recv_forward_{qid}'] = start_communication_delegate(f'RecvForward{qid}', self.queues[f'recv_forward_msg_{qid}'], self.queues[f'recv_forward_task_{qid}'], self.shms[f'recv_forward_shm_{qid}'], dist_info_recv_forward)
 
         # (4) Create: recv from the next node (recv_backward)
         if my_stage != total_stages - 1:  # not the last PP stage
@@ -197,7 +243,9 @@ class DelegateManager():
                 dist_info_recv_backward['MASTER_PORT'] = 12317 + qid
                 self.queues[f'recv_backward_msg_{qid}'] = mp.Queue()
                 self.queues[f'recv_backward_task_{qid}'] = mp.Queue()
-                self.delegates[f'recv_backward_{qid}'] = start_communication_delegate(f'RecvBackward{qid}', self.queues[f'recv_backward_msg_{qid}'], self.queues[f'recv_backward_task_{qid}'], dist_info_recv_backward)
+                self.shms[f'recv_backward_shm_{qid}'] = SharedMemory(create=True, size=2 * 12 * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                memcpy.register_pinned_memory(addr_of(self.shms[f'recv_backward_shm_{qid}'].buf, 0), self.shms[f'recv_backward_shm_{qid}'].size)
+                self.delegates[f'recv_backward_{qid}'] = start_communication_delegate(f'RecvBackward{qid}', self.queues[f'recv_backward_msg_{qid}'], self.queues[f'recv_backward_task_{qid}'], self.shms[f'recv_backward_shm_{qid}'], dist_info_recv_backward)
 
         # print("[DelegateManager] Init Wait.")
         # Wait for initialization
@@ -216,6 +264,12 @@ class DelegateManager():
         assert num_mbs % self.num_delegates == 0
         # Round robin assignment
         num_mbs = num_mbs // self.num_delegates
+        for shm in self.shms.values():
+            if shm is not None:
+                # reset all signals
+                for i in range(num_mbs):
+                    signal = torch.from_numpy(np.ndarray((1,), np.float16, shm.buf[i * 2 : (i + 1) * 2]))
+                    signal[0] = 0
         for i in range(self.num_delegates):
             if self.my_stage != self.total_stages - 1:
                 self.queues[f'send_forward_msg_{i}'].put(num_mbs)
@@ -240,6 +294,9 @@ class DelegateManager():
             if self.my_stage != self.total_stages - 1:
                 self.queues[f'recv_backward_msg_{i}'].put(None)
                 self.delegates[f'recv_backward_{i}'].join()
+        for shm in self.shms.values():
+            if shm is not None:
+                shm.unlink()
         print("[DelegateManager] Shutdown gracefully.")
 
 
