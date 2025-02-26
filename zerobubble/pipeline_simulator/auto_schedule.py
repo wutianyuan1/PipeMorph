@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from typing import List, Set
 from pipeline_simulator import batches
-from pipeline_simulator.schedule import PipelineSimulator
+from pipeline_simulator.schedule import PipelineSimulator, calc_delta_x
 from pipeline_simulator.policy import GpipePolicy, PipeDreamPolicy, OurPolicy, FixedPolicy
 
 
@@ -209,11 +209,31 @@ def ilp_results(graph: Graph, F, comm_delay):
     return local_order
 
 
-def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List, delay_time: float):
-    # config.cost_f = [28, 32, 32, 31]
-    # config.cost_b = [32, 40, 45, 38]
-    # config.cost_w = [15, 21, 29, 24]
+def search_best_simdelay(nstages: int, nmb: int, config: GraphConfig, delay_links: List, delay_time: float, step_size: int = 5):
+    real_delay = {(i, i + 1): config.cost_comm for i in range(nstages - 1)}
+    slow_stages = []
+    for link in delay_links:
+        real_delay[link] = delay_time
 
+    best_sim_delay, best_iter_time = None, float("inf")
+    for sim_delay in range(0, delay_time + step_size, step_size):
+        policy = OurPolicy(nstages)
+        delay = {k: sim_delay for k in real_delay.keys() if real_delay[k] != 0}
+        delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, delay, True)
+        delay_simulator.simulate()
+        schedule = delay_simulator.export()
+        simu_4_plot = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, None, schedule), slow_stages, real_delay, True)
+        t = simu_4_plot.simulate()
+        simu_4_plot.export("./simu_4_plot.txt")
+        print(f"[Search Schedule] sim_delay={delay}, iter_time={t - 1} delta_i={calc_delta_x('./simu_4_plot.txt')}")
+        if t < best_iter_time:
+            best_iter_time = t
+            best_sim_delay = sim_delay
+    print(f"[Search Schedule] best_sim_delay={best_sim_delay}")
+    return best_sim_delay
+
+
+def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List, delay_time: float):
     config.cost_f = [15, 16, 16, 15]
     config.cost_b = [16, 19, 19, 16]
     config.cost_w = [11, 12, 12, 11]
@@ -223,26 +243,20 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List
     graph = Graph.build_graph(nstages, nmb, config)
     batches.update_times(config.cost_f, config.cost_b, config.cost_w)
 
-    # policy = PipeDreamPolicy(nstages)
-    # policy = GpipePolicy()
+    best_sim_delay = search_best_simdelay(nstages, nmb, config, delay_links, delay_time, 5)
     policy = OurPolicy(nstages)
-    # policy = FixedPolicy(nstages)
-    comm_delay = {
-        (i, i + 1): config.cost_comm for i in range(nstages - 1)
-    }
+    comm_delay = {(i, i + 1): config.cost_comm for i in range(nstages - 1)}
     slow_stages = []
     for link in delay_links:
         comm_delay[link] = delay_time
-    re_schedule = True
-    delay = comm_delay if re_schedule else {(i, i + 1): 0 for i in range(nstages - 1)}
+    delay = {k: best_sim_delay for k in comm_delay.keys() if comm_delay[k] != 0}
     delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, delay, True)
-    print(repr(type(policy)))
     delay_simulator.simulate()
-    schedule = delay_simulator.export()
-    simu_4_plot = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, None, schedule), slow_stages, comm_delay, True)
-    t = simu_4_plot.simulate()
-    print(f"[Simulation (ms)] {t - 1}")
-    simu_4_plot.to_text(f"./simu.txt")
+    # schedule = delay_simulator.export()
+    # simu_4_plot = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, None, schedule), slow_stages, comm_delay, True)
+    # t = simu_4_plot.simulate()
+    # simu_4_plot.to_text("./simu.txt")
+    # print(f"[Simulation (ms)] {t - 1}")
     complete_time = delay_simulator.gen_schedule_graph_no_comm()
     return ilp_results(graph, complete_time, comm_delay)
 
@@ -259,5 +273,5 @@ if __name__ == "__main__":
             mem_w=[-1]*p,
             max_mem=[mem]*p,
             print_scaling=1000 if f > 1000 else 1
-        ))
-    simple_schedule(4, 8, 10, 10, 10, None, None)
+        ), [(1, 2)], 60)
+    simple_schedule(4, 12, 10, 10, 10, 0, 0)

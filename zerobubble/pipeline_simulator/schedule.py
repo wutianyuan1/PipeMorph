@@ -156,10 +156,8 @@ class PipelineSimulator(object):
         for i in range(self.num_stages):
             for j in range(len(self.history_queues[i])):
                 batch = self.history_queues[i][j]
-                print(self.history_queues[i][j].execution_begin - self.history_queues[i][j-1].execution_begin)
                 batch.plot(ax, self.num_stages - i - 1, 1)
                 maxt = max(maxt, batch.execution_begin + batch.execution_time)
-        print(FORWARD_TIMES, BACKWARD_TIMES)
         normal_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches for i in range(self.num_stages) if i not in self.slow_stages])
         slow_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches * SLOW_FACTORS[i] for i in range(self.num_stages) if i in self.slow_stages])
         usage = (normal_stage_total + slow_stage_total) / (maxt * self.num_stages)
