@@ -305,12 +305,14 @@ class OurScheduler:
         self.forward_only = forward_only
         self._reset()
 
-        my_rank = self.stage
+
         ip_list = get_ip_list()
+        tp_dp = parallel_state.get_tensor_model_parallel_world_size() * parallel_state.get_data_parallel_world_size()
+        my_rank = torch.distributed.get_rank()
         my_ip = ip_list[my_rank]
-        prev_ip = ip_list[my_rank - 1] if my_rank != 0 else None
-        next_ip = ip_list[my_rank + 1] if my_rank != self.num_stages - 1 else None
-        self.delegate_manager = DelegateManager(my_rank, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=3, ipc_way={'send_way': SEND_WAY, 'recv_way': RECV_WAY}, num_microbatches=num_microbatches)
+        prev_ip = ip_list[my_rank - tp_dp] if self.stage != 0 else None
+        next_ip = ip_list[my_rank + tp_dp] if self.stage != self.num_stages - 1 else None
+        self.delegate_manager = DelegateManager(self.stage, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=3, ipc_way={'send_way': SEND_WAY, 'recv_way': RECV_WAY}, num_microbatches=num_microbatches)
         assert send_tensor_shapes[0] == recv_tensor_shapes[0]
         self.data_size = torch.prod(torch.tensor(send_tensor_shapes[0])).item() * FLOAT16_NBYTES
         if RECV_WAY == "shm":
@@ -364,7 +366,7 @@ class OurScheduler:
                     self.schedule_w(scheduled_node, non_w_pending)
             mem = torch.cuda.memory_reserved(torch.cuda.current_device())
             max_cuda_reserved_mem = max(max_cuda_reserved_mem, mem)
-        print(f"[Node{self.stage}] Max reserved memory: {max_cuda_reserved_mem / (1024 ** 3)} GB")
+        # print(f"[Node{self.stage}] Max reserved memory: {max_cuda_reserved_mem / (1024 ** 3)} GB")
 
         # Finalize, process the pending Ws
         pending_ws = WeightGradStore.weight_grad_queue[0].qsize()
