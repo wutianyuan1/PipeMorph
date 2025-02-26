@@ -216,7 +216,7 @@ def search_best_simdelay(nstages: int, nmb: int, config: GraphConfig, delay_link
         real_delay[link] = delay_time
 
     best_sim_delay, best_iter_time = None, float("inf")
-    for sim_delay in range(0, delay_time + step_size, step_size):
+    for sim_delay in range(0, int(delay_time + step_size), int(step_size)):
         policy = OurPolicy(nstages)
         delay = {k: sim_delay for k in real_delay.keys() if real_delay[k] != 0}
         delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, delay, True)
