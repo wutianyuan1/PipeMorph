@@ -13,5 +13,3 @@ einops
 isort
 megatron-core==0.7.0
 pulp
-https://410374-2.oss-cn-hangzhou-zmf.aliyuncs.com/pkgs/transformers_turbo-0.0.5-py3-none-any.whl
-https://424850.oss-cn-hangzhou-zmf.aliyuncs.com/apex/apex-0.1-cp310-cp310-linux_x86_64.whl?OSSAccessKeyId=LTAI5tBYK9dcsovL5zZynVcM&Expires=10001733823892&Signature=vREMwI0SVQcl5faX4zlp6ulb1oE%3D
