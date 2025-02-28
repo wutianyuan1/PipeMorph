@@ -33,4 +33,4 @@ for dp, gpus in enumerate([[0, 2], [1, 3]]):
     ax.set_xlim(0, maxt)
     ax.set_ylim(0, num_stages)
     ax.set_yticks(np.arange(num_stages) + 0.5, [f"Stage {i}" for i in range(num_stages - 1, -1, -1)])
-    plt.savefig(f"/workspace/test-varuna/zerobubble/real_dp{dp}.png")
+    plt.savefig(f"/workspace/PipeMorph/zerobubble/real_dp{dp}.png")

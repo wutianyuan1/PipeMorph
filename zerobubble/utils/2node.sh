@@ -1,12 +1,12 @@
 #!/bin/bash
-cd /root/workspace/test-varuna/zerobubble
+cd /root/workspace/PipeMorph/zerobubble
 source ~/.bashrc
 echo `pwd`
 python_exe=`which python`
 if [ -z "$S" ]; then
   S=2
 fi
-# export LD_PRELOAD=/workspace/test-varuna/zerobubble/megatron/core/failslow_injection/libinjection.so
+# export LD_PRELOAD=/workspace/PipeMorph/zerobubble/megatron/core/failslow_injection/libinjection.so
 export ENABLE_ZERO_BUBBLE=1 
 export GPUS_PER_NODE=1 NODERANK=$R
 

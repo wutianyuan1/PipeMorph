@@ -2,7 +2,7 @@
 if [ -z "$S" ]; then
   S=4
 fi
-# export LD_PRELOAD=/workspace/test-varuna/zerobubble/megatron/core/failslow_injection/libinjection.so
+# export LD_PRELOAD=/workspace/PipeMorph/zerobubble/megatron/core/failslow_injection/libinjection.so
 export ENABLE_ZERO_BUBBLE=1
 export GPUS_PER_NODE=$S
 ./examples/pretrain_zero_bubble.sh

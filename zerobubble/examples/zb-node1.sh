@@ -9,11 +9,11 @@ DIR=`pwd`
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 mkdir -p $DIR/logs
 
-DATASET="/root/workspace/test-varuna/zerobubble/zb_sample_dataset/dataset/c4_text_document"
+DATASET="/root/workspace/PipeMorph/zerobubble/zb_sample_dataset/dataset/c4_text_document"
 
 if [ ! -e "$DATASET"".idx" ]; then
   wget https://huggingface.co/datasets/ufotalent/zero_bubble_sample_dataset/resolve/main/zb_sample_dataset.tar.gz
-  tar -xvf zb_sample_dataset.tar.gz -C /root/workspace/test-varuna/zerobubble/
+  tar -xvf zb_sample_dataset.tar.gz -C /root/workspace/PipeMorph/zerobubble/
 fi
 
 # Running locally
@@ -83,7 +83,7 @@ options=" \
   --eval-interval $EVAL_INTERVAL \
   --data-path ${DATASET} \
   --tokenizer-type GPTSentencePieceTokenizer \
-  --tokenizer-model /root/workspace/test-varuna/zerobubble/zb_sample_dataset/tokenizers/tokenizer.model \
+  --tokenizer-model /root/workspace/PipeMorph/zerobubble/zb_sample_dataset/tokenizers/tokenizer.model \
   --split 98,2,0 \
   --clip-grad 8.0 \
   --weight-decay 0.1 \
