@@ -61,7 +61,7 @@ class PipeDreamPolicy(PipelinePolicy):
         return minidx
 
 
-# ZeroBubble (ICLR'24)
+# OurPolicy adapted from ZeroBubble (ICLR'24)
 class OurPolicy(PipelinePolicy):
     def __init__(self, num_stages: int) -> None:
         super().__init__()
@@ -87,15 +87,32 @@ class OurPolicy(PipelinePolicy):
                         minval = cur
                         minidx = i
             
-        return minidx  
+        return minidx
 
 # ZeroBubble (ICLR'24)
+class ZeroBubblePolicy(PipelinePolicy):
+    def __init__(self, num_stages: int) -> None:
+        super().__init__()
+        self.num_stages = num_stages
+
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0, stage: int = 0) -> int:
+        assert finish_queue is not None, "1F1B requires a non-null finish queue"
+        priority_map = {ForwardBatch: 2, BackwardWeightBatch: 1, BackwardInputBatch: 3}
+        minval, minidx = (float("inf"), float("inf")), -1
+        for i, batch in enumerate(task_queue):
+            cur = (-priority_map[type(batch)], batch.batch_idx)
+            if cur < minval:
+                minval = cur
+                minidx = i
+        return minidx
+
+# Fixed Replay Policy
 class FixedPolicy(PipelinePolicy):
     def __init__(self, num_stages: int, file: str = 'schedule.txt', content: str = None) -> None:
         super().__init__()
         self.num_stages = num_stages
         if content is None:
-            with open(f'schedule_{num_stages}.txt', 'r') as f:
+            with open(file, 'r') as f:
                 content = f.read().split("\n")
         else:
             content = content.split("\n")
@@ -106,7 +123,6 @@ class FixedPolicy(PipelinePolicy):
 
     def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0, stage: int = 0) -> int:
         to_exec = self.content[stage][self.count[stage]]
-        idx_in_table = None
         for idx, item in enumerate(task_queue):
             if to_exec == repr(item) and time > item.min_begin_time - 1:
                 self.count[stage] += 1
