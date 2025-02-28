@@ -5,7 +5,7 @@ from typing import Iterator, List, Union
 import torch
 import time
 import os
-
+import torch.distributed
 from megatron import core, get_args, get_num_microbatches, print_rank_0
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel import auto_schedule, v_schedule, v_schedule_greedy
@@ -29,6 +29,8 @@ from megatron.core.weight_grad_store import WeightGradStore
 from megatron.timers import Timer
 from megatron.utils import is_second_last_pipeline_stage
 from megatron.core.pipeline_parallel.event_timer import EventTimer
+from megatron.core.pipeline_parallel.profile_buffer import ProfileBuffer
+
 
 log_file = None
 timer_sync = True
@@ -761,6 +763,7 @@ class ZeroBubbleScheduler:
         # For network delay simulation
         self.iter_cnt = 0
         self.timer = EventTimer()
+        self.profile_buffer = None
 
     def _free_buffers(self):
         self.input_tensors = []
@@ -906,6 +909,8 @@ class ZeroBubbleScheduler:
             checkpoint_activations_microbatch=None,
         )
         self.timer.end(timer_id, "F")
+        if self.profile_buffer:
+            self.profile_buffer.record('F', self.timer.get_elapsed_time(timer_id))
         if self.run_timer:
             ScheduleTimers.for_chunk(0).f.stop()
             ScheduleTimers.for_chunk(0).f_mem += torch.cuda.memory_allocated() - mem_before
@@ -947,6 +952,8 @@ class ZeroBubbleScheduler:
                 self.config
             )
             self.timer.end(timer_id, "B")
+            if self.profile_buffer:
+                self.profile_buffer.record('B', self.timer.get_elapsed_time(timer_id))
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).b.stop()
                 ScheduleTimers.for_chunk(0).b_mem += torch.cuda.memory_allocated() - mem_before
@@ -965,6 +972,8 @@ class ZeroBubbleScheduler:
             timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
             WeightGradStore.pop()
             self.timer.end(timer_id, "W")
+            if self.profile_buffer:
+                self.profile_buffer.record('W', self.timer.get_elapsed_time(timer_id))
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).w.stop()
             if get_args().profile:
@@ -994,6 +1003,7 @@ class ZeroBubbleScheduler:
         decoder_seq_length: int = None,
         forward_only: bool = False,
         collect_non_loss_data: bool = False,
+        profile_buffer: ProfileBuffer = None
     ):
         if isinstance(model, list):
             assert (
@@ -1070,6 +1080,8 @@ class ZeroBubbleScheduler:
         self.num_microbatches = num_microbatches
         self.collect_non_loss_data = collect_non_loss_data
         self.forward_only = forward_only
+        if profile_buffer:
+            self.profile_buffer = profile_buffer
         self._reset()
         self.it = 0
 
@@ -1144,14 +1156,12 @@ class ZeroBubbleScheduler:
     def run(self):
         self.disable_grad_sync()
         self.iter_cnt += 1
-        MAXITERS = 25
         global log_file
-        if self.iter_cnt == MAXITERS:
-            exit(0)
         if get_args().profile:
             torch.cuda.nvtx.range_push(f'iter_{torch.distributed.get_rank()}_{ScheduleTimers.iter_counter}')
 
-        log_file = open(f"./GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}.log", 'w') if self.iter_cnt == MAXITERS - 1 else open(os.devnull, 'w')
+        if log_file is None:
+            log_file = open(f"./GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}.log", 'w')
 
         # Get a unified timestamp across all ranks
         ts = torch.tensor([time.time() * 1000], dtype=torch.float64, device=f'cuda:{torch.distributed.get_rank() % torch.cuda.device_count()}')
@@ -1159,7 +1169,6 @@ class ZeroBubbleScheduler:
         self.t_start = ts.item()
 
         it = self.it
-        # print_rank_0([n.type for n in self.schedules if n.type in AUTO_SCHEDULE_COMMUNICATION_TYPES or n.type in []])
         while it < len(self.schedules):
             scheduled_node = self.schedules[it]
             if "POST_VALIDATION" in scheduled_node.type:
@@ -1201,6 +1210,7 @@ class ZeroBubbleScheduler:
             for hh in h:
                 for hhh in hh:
                     hhh.wait()
+        print_with_rank(f"Iteration {self.iter_cnt}")
         self.timer.print_all(print_func=print_with_rank)
 
         if not self.forward_only:

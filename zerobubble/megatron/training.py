@@ -53,8 +53,10 @@ from megatron.utils import calc_params_l2_norm
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.weight_grad_store import WeightGradStore
 from megatron.core.failslow_injection.slow_link_injector import SlowLinkInjector
+from megatron.core import parallel_state
 from megatron.utils import report_memory
 from megatron.model.vision.knn_monitor import compute_feature_bank
+from megatron.core.pipeline_parallel.profile_buffer import ProfileBuffer
 
 
 def print_datetime(string):
@@ -420,8 +422,8 @@ def setup_model_and_optimizer(model_provider_func,
 
 
 
-def train_step(use_delegate, forward_step_func, data_iterator,
-               model, optimizer, opt_param_scheduler, config, no_optimizer_post_validation=False):
+def train_step(use_delegate, forward_step_func, data_iterator, model, optimizer,
+               opt_param_scheduler, config, no_optimizer_post_validation=False, profile_buffer=None):
     """Single training step."""
     args = get_args()
     timers = get_timers()
@@ -451,7 +453,8 @@ def train_step(use_delegate, forward_step_func, data_iterator,
             seq_length=args.seq_length,
             micro_batch_size=args.micro_batch_size,
             decoder_seq_length=args.decoder_seq_length,
-            forward_only=False)
+            forward_only=False,
+            profile_buffer=profile_buffer)
 
     losses_reduced = run_forward_backward_func()
 
@@ -806,6 +809,9 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         slow_injector = None
     use_delegate_tensor = torch.tensor([0], device='cpu', dtype=torch.int32)
 
+    # Madoka: add profile_buffer to record F/B/W execution time (via cuda events)
+    profile_buffer = ProfileBuffer(torch.distributed.get_world_size(), parallel_state.get_pipeline_model_parallel_world_size())
+
     while iteration < args.train_iters:
         if args.profile and \
            iteration == args.profile_step_start and \
@@ -842,7 +848,9 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                        model,
                        optimizer,
                        opt_param_scheduler,
-                       config, no_optimizer_post_validation)
+                       config,
+                       no_optimizer_post_validation,
+                       profile_buffer if iteration in [1, 2] else None)  # Iteration 1 and 2: set this buffer for the original and CPU scheduler
         
         args.consumed_train_samples += mpu.get_data_parallel_world_size() * \
                                        args.micro_batch_size * \

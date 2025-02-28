@@ -1,6 +1,6 @@
 import torch
 import time
-from typing import Callable
+from typing import Callable, List
 
 
 class TimerItem(object):
@@ -25,10 +25,13 @@ class TimerItem(object):
             self.sync_done = True
         self.cpu_end = time.time()
 
-    def elapsed_time(self) -> float:
+    def synchronize(self) -> None:
         if not self.sync_done:
             self.end_event.synchronize()
             self.sync_done = True
+
+    def elapsed_time(self) -> float:
+        self.synchronize()
         return self.start_event.elapsed_time(self.end_event)
 
     def print(self, print_func: Callable) -> None:
@@ -37,7 +40,7 @@ class TimerItem(object):
 
 class EventTimer(object):
     def __init__(self) -> None:
-        self.timer_items = []
+        self.timer_items: List[TimerItem] = []
 
     def start(self, t_start: float, eager_sync: bool = True) -> int:
         # Returns the timer item ID in the list
@@ -49,6 +52,9 @@ class EventTimer(object):
     def end(self, timer_id: int, prompt: str = "Timer") -> None:
         self.timer_items[timer_id].end()
         self.timer_items[timer_id].prompt = prompt
+
+    def get_elapsed_time(self, timer_id: int) -> float:
+        return self.timer_items[timer_id].elapsed_time()
 
     def print_all(self, print_func: Callable):
         for item in self.timer_items:

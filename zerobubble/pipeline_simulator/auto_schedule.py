@@ -234,10 +234,6 @@ def search_best_simdelay(nstages: int, nmb: int, config: GraphConfig, delay_link
 
 
 def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List, delay_time: float):
-    config.cost_f = [15, 16, 16, 15]
-    config.cost_b = [16, 19, 19, 16]
-    config.cost_w = [11, 12, 12, 11]
-    config.cost_comm = 0
     print(config)
     print(f"{nstages} stages, {nmb} micro-batches")
     graph = Graph.build_graph(nstages, nmb, config)
