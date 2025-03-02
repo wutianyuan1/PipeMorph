@@ -1,6 +1,7 @@
 import torch
 import pulp
 import matplotlib.pyplot as plt
+import os
 from dataclasses import dataclass
 from typing import List, Set
 from pipeline_simulator import batches
@@ -214,9 +215,10 @@ def search_best_simdelay(nstages: int, nmb: int, config: GraphConfig, delay_link
     slow_stages = []
     for link in delay_links:
         real_delay[link] = delay_time
-
+    path = os.getenv("OUT_DIR")
+    path = path if path is not None else '.'
     best_sim_delay, best_iter_time = None, float("inf")
-    for sim_delay in range(0, delay_time + step_size, step_size):
+    for sim_delay in range(0, int(delay_time + step_size), int(step_size)):
         policy = OurPolicy(nstages)
         delay = {k: sim_delay for k in real_delay.keys() if real_delay[k] != 0}
         delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, delay, True)
@@ -224,22 +226,19 @@ def search_best_simdelay(nstages: int, nmb: int, config: GraphConfig, delay_link
         schedule = delay_simulator.export()
         simu_4_plot = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, None, schedule), slow_stages, real_delay, True)
         t = simu_4_plot.simulate()
-        simu_4_plot.export("./simu_4_plot.txt")
-        print(f"[Search Schedule] sim_delay={delay}, iter_time={t - 1} delta_i={calc_delta_x('./simu_4_plot.txt')}")
+        # simu_4_plot.export(f"{path}/simu_4_plot.txt")
+        # print(f"[Search Schedule] sim_delay={delay}, iter_time={t - 1} delta_i={calc_delta_x(f'{path}/simu_4_plot.txt')}")
         if t < best_iter_time:
             best_iter_time = t
             best_sim_delay = sim_delay
-    print(f"[Search Schedule] best_sim_delay={best_sim_delay}")
+    # print(f"[Search Schedule] best_sim_delay={best_sim_delay}")
     return best_sim_delay
 
 
 def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List, delay_time: float):
-    config.cost_f = [15, 16, 16, 15]
-    config.cost_b = [16, 19, 19, 16]
-    config.cost_w = [11, 12, 12, 11]
-    config.cost_comm = 0
-    print(config)
-    print(f"{nstages} stages, {nmb} micro-batches")
+    if torch.distributed.get_rank() == 0:
+        print(config.cost_f, config.cost_b, config.cost_w)
+        print(f"{nstages} stages, {nmb} micro-batches")
     graph = Graph.build_graph(nstages, nmb, config)
     batches.update_times(config.cost_f, config.cost_b, config.cost_w)
 
@@ -252,10 +251,12 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List
     delay = {k: best_sim_delay for k in comm_delay.keys() if comm_delay[k] != 0}
     delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, delay, True)
     delay_simulator.simulate()
-    # schedule = delay_simulator.export()
-    # simu_4_plot = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, None, schedule), slow_stages, comm_delay, True)
-    # t = simu_4_plot.simulate()
-    # simu_4_plot.to_text("./simu.txt")
+    schedule = delay_simulator.export()
+    simu_4_plot = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, None, schedule), slow_stages, comm_delay, True)
+    t = simu_4_plot.simulate()
+    path = os.getenv("OUT_DIR")
+    path = path if path is not None else '.'
+    simu_4_plot.to_text(f"{path}/simu.txt")
     # print(f"[Simulation (ms)] {t - 1}")
     complete_time = delay_simulator.gen_schedule_graph_no_comm()
     return ilp_results(graph, complete_time, comm_delay)

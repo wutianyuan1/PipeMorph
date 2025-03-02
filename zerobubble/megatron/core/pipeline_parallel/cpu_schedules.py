@@ -23,6 +23,7 @@ from megatron.core.weight_grad_store import WeightGradStore
 from pipeline_simulator.auto_schedule import ScheduledNode, auto_schedule, GraphConfig
 from megatron.core.pipeline_parallel.event_timer import EventTimer
 from megatron.core.pipeline_parallel.cpu_delegate import DelegateManager, addr_of, get_shm_signal, FLOAT16_NBYTES, UNREADY_SIGNAL, SEND_SIGNAL, RECV_SIGNAL_CPU, RECV_SIGNAL_GPU
+from megatron.core.pipeline_parallel.profile_buffer import ProfileBuffer
 
 
 AUTO_SCHEDULE_COMMUNICATION_TYPES = {'RECV_FORWARD', 'RECV_BACKWARD', 'SEND_FORWARD', 'SEND_BACKWARD'}
@@ -76,6 +77,7 @@ class OurScheduler:
         self.slow_links = [(1, 2)]
         self.timer = EventTimer()
         self.comp_stream = torch.cuda.Stream(priority=-100)
+        self.profile_buffer = None
 
     def _free_buffers(self):
         self.input_tensors = []
@@ -239,6 +241,7 @@ class OurScheduler:
         decoder_seq_length: int = None,
         forward_only: bool = False,
         collect_non_loss_data: bool = False,
+        profile_buffer: ProfileBuffer = None
     ):
         if isinstance(model, list):
             assert (
@@ -303,6 +306,8 @@ class OurScheduler:
         self.num_microbatches = num_microbatches
         self.collect_non_loss_data = collect_non_loss_data
         self.forward_only = forward_only
+        if profile_buffer:
+            self.profile_buffer = profile_buffer
         self._reset()
 
 
@@ -312,7 +317,16 @@ class OurScheduler:
         my_ip = ip_list[my_rank]
         prev_ip = ip_list[my_rank - tp_dp] if self.stage != 0 else None
         next_ip = ip_list[my_rank + tp_dp] if self.stage != self.num_stages - 1 else None
-        self.delegate_manager = DelegateManager(self.stage, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=3, ipc_way={'send_way': SEND_WAY, 'recv_way': RECV_WAY}, num_microbatches=num_microbatches)
+        self.delegate_manager = DelegateManager(self.stage,
+                                    self.num_stages,
+                                    my_ip,
+                                    prev_ip,
+                                    next_ip,
+                                    send_tensor_shapes[0],
+                                    self.config.pipeline_dtype,
+                                    num_delegates=int(os.getenv("NUM_DELEGATES")),
+                                    ipc_way={'send_way': SEND_WAY, 'recv_way': RECV_WAY},
+                                    num_microbatches=num_microbatches)
         assert send_tensor_shapes[0] == recv_tensor_shapes[0]
         self.data_size = torch.prod(torch.tensor(send_tensor_shapes[0])).item() * FLOAT16_NBYTES
         if RECV_WAY == "shm":
@@ -328,14 +342,11 @@ class OurScheduler:
         # Actual training loigc starts here!
         self.disable_grad_sync()
         self.iter_cnt += 1
-        # Now, only run MAXITERS iterations for testing and record the last iter's performance
-        MAXITERS = 20
         global log_file
-        if self.iter_cnt == MAXITERS:
-            self.delegate_manager.terminate()
-            torch.distributed.destroy_process_group()
-            exit(0)
-        log_file = open(f"./GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}.log", 'w') if self.iter_cnt == MAXITERS - 1 else open(os.devnull, 'w')
+        if log_file is None:
+            path = os.getenv("OUT_DIR")
+            path = path if path is not None else '.'
+            log_file = open(f"{path}/GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}_CPU.log", 'w')
 
         # Get a unified timestamp across all ranks
         ts = torch.tensor([time.time() * 1000], dtype=torch.float64, device=f'cuda:{torch.distributed.get_rank() % torch.cuda.device_count()}')
@@ -376,6 +387,7 @@ class OurScheduler:
                 WeightGradStore.clear(self.model)
                 self.timer.end(timer_id, f"{pending_ws}W")
 
+        print_with_rank(f"Iteration {self.iter_cnt}")
         self.timer.print_all(print_func=print_with_rank)
 
         if not self.forward_only:
@@ -415,7 +427,7 @@ def get_our_scheduler_instance():
     return our_scheduler
 
 
-def update_schedule(num_stages, num_microbatches):
+def update_schedule(num_stages, num_microbatches, profile_exec_times):
     global schedule, redis_client, delay_links, delay_time, reschedule_at_next_iter
     if redis_client is None:
         redis_client = redis.StrictRedis(host=os.environ['MASTER_ADDR'], port=int(os.environ.get('REDIS_PORT', '6379')))
@@ -441,22 +453,28 @@ def update_schedule(num_stages, num_microbatches):
     if new_delay_time != delay_time or new_delay_links != delay_links:
         delay_links = new_delay_links
         delay_time = new_delay_time
-        reschedule_at_next_iter = True  # Require re-schedule
+        method = os.getenv("METHOD")
+        if method is None or method == "ZB-CPU-ReSchedule":
+            reschedule_at_next_iter = True  # Require re-schedule
 
     if schedule is None:
+        is_valid_profile = True if (profile_exec_times is not None and profile_exec_times[0, 0] != 0.0) else False
         schedule = auto_schedule(
             num_stages,
             num_microbatches,
             GraphConfig(
                 mem_f=[1000], mem_b=[-500], mem_w=[-500],
-                cost_f=[1000] * 4, cost_b=[1000] * 4, cost_w=[1000] * 4, cost_comm=0
+                cost_f=np.round(profile_exec_times[0]).astype(int).tolist() if is_valid_profile else [10] * num_stages,
+                cost_b=np.round(profile_exec_times[1]).astype(int).tolist() if is_valid_profile else [10] * num_stages,
+                cost_w=np.round(profile_exec_times[2]).astype(int).tolist() if is_valid_profile else [10] * num_stages,
+                cost_comm=0
             ),
             delay_links,
             delay_time * 1000.0  # convert s to ms
         )
-        for stage in range(num_stages):
-            print_rank_0(f'Stage {stage}')
-            print_rank_0([node.type for node in schedule[stage]])
+        # for stage in range(num_stages):
+        #     print_rank_0(f'Stage {stage}')
+        #     print_rank_0([node.type for node in schedule[stage]])
     return schedule
 
 
@@ -464,8 +482,12 @@ def get_zero_bubble_cpu_forward_backward_func():
     pipeline_model_parallel_size = parallel_state.get_pipeline_model_parallel_world_size()
     assert pipeline_model_parallel_size > 1, "[OurSchedule] must enable pipeline parallelism"
     scheduler_instance = get_our_scheduler_instance()
+    if scheduler_instance.profile_buffer is not None:
+        profile_exec_times = scheduler_instance.profile_buffer.get_stage_exec_times()
+    else:
+        profile_exec_times = None
     pp_rank = parallel_state.get_pipeline_model_parallel_rank()
-    global_schedule = update_schedule(pipeline_model_parallel_size, get_num_microbatches())
+    global_schedule = update_schedule(pipeline_model_parallel_size, get_num_microbatches(), profile_exec_times)
     scheduler_instance.schedules = global_schedule[pp_rank]
 
     def forward_backward_func(**kwargs):
