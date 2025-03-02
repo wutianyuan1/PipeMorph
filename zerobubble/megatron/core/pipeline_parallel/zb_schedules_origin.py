@@ -909,7 +909,7 @@ class ZeroBubbleScheduler:
             checkpoint_activations_microbatch=None,
         )
         self.timer.end(timer_id, "F")
-        if self.profile_buffer:
+        if self.profile_buffer and self.iter_cnt != 1:
             self.profile_buffer.record('F', self.timer.get_elapsed_time(timer_id))
         if self.run_timer:
             ScheduleTimers.for_chunk(0).f.stop()
@@ -952,7 +952,7 @@ class ZeroBubbleScheduler:
                 self.config
             )
             self.timer.end(timer_id, "B")
-            if self.profile_buffer:
+            if self.profile_buffer and self.iter_cnt != 1:
                 self.profile_buffer.record('B', self.timer.get_elapsed_time(timer_id))
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).b.stop()
@@ -972,7 +972,7 @@ class ZeroBubbleScheduler:
             timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
             WeightGradStore.pop()
             self.timer.end(timer_id, "W")
-            if self.profile_buffer:
+            if self.profile_buffer and self.iter_cnt != 1:
                 self.profile_buffer.record('W', self.timer.get_elapsed_time(timer_id))
             if self.run_timer:
                 ScheduleTimers.for_chunk(0).w.stop()
@@ -1161,7 +1161,9 @@ class ZeroBubbleScheduler:
             torch.cuda.nvtx.range_push(f'iter_{torch.distributed.get_rank()}_{ScheduleTimers.iter_counter}')
 
         if log_file is None:
-            log_file = open(f"./GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}.log", 'w')
+            path = os.getenv("OUT_DIR")
+            path = path if path is not None else '.'
+            log_file = open(f"{path}/GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}.log", 'w')
 
         # Get a unified timestamp across all ranks
         ts = torch.tensor([time.time() * 1000], dtype=torch.float64, device=f'cuda:{torch.distributed.get_rank() % torch.cuda.device_count()}')

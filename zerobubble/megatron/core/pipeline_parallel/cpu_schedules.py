@@ -317,7 +317,16 @@ class OurScheduler:
         my_ip = ip_list[my_rank]
         prev_ip = ip_list[my_rank - tp_dp] if self.stage != 0 else None
         next_ip = ip_list[my_rank + tp_dp] if self.stage != self.num_stages - 1 else None
-        self.delegate_manager = DelegateManager(self.stage, self.num_stages, my_ip, prev_ip, next_ip, send_tensor_shapes[0], self.config.pipeline_dtype, num_delegates=3, ipc_way={'send_way': SEND_WAY, 'recv_way': RECV_WAY}, num_microbatches=num_microbatches)
+        self.delegate_manager = DelegateManager(self.stage,
+                                    self.num_stages,
+                                    my_ip,
+                                    prev_ip,
+                                    next_ip,
+                                    send_tensor_shapes[0],
+                                    self.config.pipeline_dtype,
+                                    num_delegates=int(os.getenv("NUM_DELEGATES")),
+                                    ipc_way={'send_way': SEND_WAY, 'recv_way': RECV_WAY},
+                                    num_microbatches=num_microbatches)
         assert send_tensor_shapes[0] == recv_tensor_shapes[0]
         self.data_size = torch.prod(torch.tensor(send_tensor_shapes[0])).item() * FLOAT16_NBYTES
         if RECV_WAY == "shm":
@@ -335,7 +344,9 @@ class OurScheduler:
         self.iter_cnt += 1
         global log_file
         if log_file is None:
-            log_file = open(f"./GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}_CPU.log", 'w')
+            path = os.getenv("OUT_DIR")
+            path = path if path is not None else '.'
+            log_file = open(f"{path}/GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}_CPU.log", 'w')
 
         # Get a unified timestamp across all ranks
         ts = torch.tensor([time.time() * 1000], dtype=torch.float64, device=f'cuda:{torch.distributed.get_rank() % torch.cuda.device_count()}')
@@ -442,7 +453,9 @@ def update_schedule(num_stages, num_microbatches, profile_exec_times):
     if new_delay_time != delay_time or new_delay_links != delay_links:
         delay_links = new_delay_links
         delay_time = new_delay_time
-        reschedule_at_next_iter = True  # Require re-schedule
+        method = os.getenv("METHOD")
+        if method is None or method == "ZB-CPU-ReSchedule":
+            reschedule_at_next_iter = True  # Require re-schedule
 
     if schedule is None:
         is_valid_profile = True if (profile_exec_times is not None and profile_exec_times[0, 0] != 0.0) else False
@@ -459,9 +472,9 @@ def update_schedule(num_stages, num_microbatches, profile_exec_times):
             delay_links,
             delay_time * 1000.0  # convert s to ms
         )
-        for stage in range(num_stages):
-            print_rank_0(f'Stage {stage}')
-            print_rank_0([node.type for node in schedule[stage]])
+        # for stage in range(num_stages):
+        #     print_rank_0(f'Stage {stage}')
+        #     print_rank_0([node.type for node in schedule[stage]])
     return schedule
 
 

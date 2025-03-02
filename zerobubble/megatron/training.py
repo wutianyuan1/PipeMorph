@@ -726,6 +726,12 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
             # print_rank_last(log_string)
         else:
             print_rank_last(log_string)
+        if torch.distributed.is_initialized():
+            if is_last_rank():
+                path = os.getenv("OUT_DIR")
+                path = path if path is not None else '.'
+                with open(f"{path}/log.txt", 'a') as f:
+                    f.write(log_string + '\n')
         if report_memory_flag and learning_rate > 0.:
             # Report memory after optimizer state has been initialized.
             report_memory('(after {} iterations)'.format(iteration))
@@ -842,7 +848,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         do_eval = args.eval_interval and iteration % args.eval_interval == 0 and args.do_valid
         no_optimizer_post_validation = do_eval or (args.exit_interval and iteration % args.exit_interval == 0)
         loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = \
-            train_step(use_delegate,
+            train_step(use_delegate if os.getenv("METHOD") != "ZB" else (True if iteration == 1 else False),
                        forward_step_func,
                        train_data_iterator,
                        model,

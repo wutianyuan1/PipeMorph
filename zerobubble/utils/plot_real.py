@@ -2,17 +2,23 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 import argparse
+import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--num_stages', type=int, default=4)
+parser.add_argument('--dp_tp_prod', type=int, default=1)
 args = parser.parse_args()
 
-def parse_and_plot(ax, warm_up_iters: int = 2, is_cpu: bool = False):
+path = os.getenv("OUT_DIR")
+path = path if path is not None else '.'
+
+def parse_and_plot(ax, warm_up_iters: int = 2, count_last_iters: int = 5, is_cpu: bool = False):
     num_stages = args.num_stages
+    dp_tp_prod = args.dp_tp_prod
     all_log_data = []
     all_iter_times = []
     for i in range(num_stages):
-        with open(f"GPU{i}_rank{i}{'_CPU' if is_cpu else ''}.log", 'r') as f:
+        with open(f"{path}/GPU{i * dp_tp_prod}_rank{i * dp_tp_prod}{'_CPU' if is_cpu else ''}.log", 'r') as f:
             all_logs = f.read().split("Iteration")
             stage_all_log_data = []
             stage_iter_times = []
@@ -51,8 +57,8 @@ def parse_and_plot(ax, warm_up_iters: int = 2, is_cpu: bool = False):
         all_log_data.append(stage_all_log_data)
         all_iter_times.append(stage_iter_times)
 
-    all_log_data = np.array(all_log_data)[:, warm_up_iters:, :, :]
-    all_iter_times = np.array(all_iter_times)[:, warm_up_iters:]
+    all_log_data = np.array(all_log_data)[:, -count_last_iters :, :, :]
+    all_iter_times = np.array(all_iter_times)[:, -count_last_iters :]
     all_iter_times = np.max(all_iter_times, axis=0)  # max across all stages to get the real iteration time
     # TODO: Madoka: current implementation is to find a best iteration to plot (i.e., min iteration time), consider using mean?
     best_iter_id = np.argmin(all_iter_times)
@@ -78,7 +84,7 @@ def parse_and_plot(ax, warm_up_iters: int = 2, is_cpu: bool = False):
 def plot_simulation(ax, maxt, num_microbatches):
     num_stages = args.num_stages
     maxt2 = 0
-    with open("simu.txt", 'r') as f:
+    with open(f"{path}/simu.txt", 'r') as f:
         for log in f.readlines():
             terms = log.strip("\n").split(', ')
             if terms[1] not in ['F', 'B', 'W']:
@@ -99,10 +105,10 @@ def plot_simulation(ax, maxt, num_microbatches):
 if __name__ == '__main__':
     plt.figure(figsize=(10, 6))
     ax = plt.subplot(311)
-    maxt, num_microbatches = parse_and_plot(ax, 2, False)
+    maxt, num_microbatches = parse_and_plot(ax, 2, 5, False)
     ax = plt.subplot(312)
-    maxt, num_microbatches = parse_and_plot(ax, 2, True)
+    maxt, num_microbatches = parse_and_plot(ax, 2, 5, True)
     ax = plt.subplot(313)
     plot_simulation(ax, maxt, num_microbatches)
     plt.tight_layout()
-    plt.savefig("./real.png")
+    plt.savefig(f"{path}/real.png")
