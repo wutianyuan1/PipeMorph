@@ -108,7 +108,7 @@ if [ ! -z "$PROFILED" ]; then
   options="$options --profile"
 fi
 
-if [ "$METHOD" == "1F1B" ]; then
+if [ "$METHOD" != "1F1B" ]; then
   if [ ! -z "$ZERO_BUBBLE_V_SCHEDULE" ]; then
     ENABLE_ZERO_BUBBLE=1
     options="$options --zero-bubble-v-schedule "
