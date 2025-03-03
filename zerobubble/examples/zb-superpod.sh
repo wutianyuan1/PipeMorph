@@ -1,8 +1,8 @@
 #!/bin/bash
-export USR_HOME=lcaoar
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/lcaoar/workspace/hiredis/build
+export USR_HOME=$SLURM_JOB_USER
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/$SLURM_JOB_USER/workspace/hiredis/build
 export LD_PRELOAD=/home/$USR_HOME/workspace/PipeMorph/zerobubble/megatron/core/failslow_injection/libinjection.so
-export ENABLE_ZERO_BUBBLE=1 
+export ENABLE_ZERO_BUBBLE=1
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
 cd /home/$USR_HOME/workspace/PipeMorph/zerobubble
@@ -108,16 +108,18 @@ if [ ! -z "$PROFILED" ]; then
   options="$options --profile"
 fi
 
-if [ ! -z "$ZERO_BUBBLE_V_SCHEDULE" ]; then
-  ENABLE_ZERO_BUBBLE=1
-  options="$options --zero-bubble-v-schedule "
-fi
+if [ "$METHOD" == "1F1B" ]; then
+  if [ ! -z "$ZERO_BUBBLE_V_SCHEDULE" ]; then
+    ENABLE_ZERO_BUBBLE=1
+    options="$options --zero-bubble-v-schedule "
+  fi
 
-if [ ! -z "$ENABLE_ZERO_BUBBLE" ]; then
-  options="$options --enable-zero-bubble \
-  --zero-bubble-pipeline-timers-start-iter $ZERO_BUBBLE_TIMER_START \
-  --zero-bubble-pipeline-timers-end-iter $ZERO_BUBBLE_TIMER_END \
-  --zero-bubble-max-pending-backward $ZERO_BUBBLE_MEM_LIMIT"
+  if [ ! -z "$ENABLE_ZERO_BUBBLE" ]; then
+    options="$options --enable-zero-bubble \
+    --zero-bubble-pipeline-timers-start-iter $ZERO_BUBBLE_TIMER_START \
+    --zero-bubble-pipeline-timers-end-iter $ZERO_BUBBLE_TIMER_END \
+    --zero-bubble-max-pending-backward $ZERO_BUBBLE_MEM_LIMIT"
+  fi
 fi
 
 if [ ! -z "$ENABLE_EXACTLY_NUMERIC_MATCH" ]; then

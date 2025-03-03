@@ -196,8 +196,9 @@ def pretrain(train_valid_test_dataset_provider,
                                    verbose=True, write_to_tensorboard=not args.skip_train)
 
     # Madoka: the CPU delegates need an explict signal to shutdown, so we pass a "terminate_signal" to the scheduler to shutdown the process.
-    forward_backward_func = get_forward_backward_func(use_delegate=True)
-    forward_backward_func(terminate_signal=True)
+    if os.getenv("METHOD") != '1F1B':
+        forward_backward_func = get_forward_backward_func(use_delegate=True)
+        forward_backward_func(terminate_signal=True)
 
 
 def update_train_iters(args):
@@ -813,7 +814,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         slow_injector = SlowLinkInjector('./megatron/core/failslow_injection/slowlinks.trace', redis_client)
     else:
         slow_injector = None
-    use_delegate_tensor = torch.tensor([0], device='cpu', dtype=torch.int32)
+    use_delegate_tensor = torch.tensor([0], device=torch.cuda.current_device(), dtype=torch.int32)
 
     # Madoka: add profile_buffer to record F/B/W execution time (via cuda events)
     profile_buffer = ProfileBuffer(torch.distributed.get_world_size(), parallel_state.get_pipeline_model_parallel_world_size())

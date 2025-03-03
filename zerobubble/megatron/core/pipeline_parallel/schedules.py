@@ -4,6 +4,7 @@ import contextlib
 from typing import Callable, Iterator, List, Optional, Union
 
 import time
+import os
 import torch
 from torch.autograd.variable import Variable
 
@@ -11,6 +12,8 @@ from megatron import core, get_args
 from megatron.core import parallel_state
 from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel import p2p_communication
+from megatron.core.pipeline_parallel.profile_buffer import ProfileBuffer
+from megatron.core.pipeline_parallel.event_timer import EventTimer
 from megatron.core.utils import get_attr_wrapped_model, get_model_config, get_model_type, reset_random_state
 
 SLEEP_TIME = 0
@@ -18,6 +21,13 @@ SLOW_LINKS = []
 
 # Types
 Shape = Union[List[int], torch.Size]
+# Timer logs
+log_file = None
+iter_cnt = 0
+
+def print_with_rank(message):
+    global log_file
+    print(f"[RANK{torch.distributed.get_rank()}] " + str(message), flush=True, file=log_file)
 
 
 def get_forward_backward_func(use_delegate: bool = False):
@@ -1101,11 +1111,15 @@ def forward_backward_pipelining_without_interleaving(
     decoder_seq_length: int = None,
     forward_only: bool = False,
     collect_non_loss_data: bool = False,
+    profile_buffer: Optional[ProfileBuffer] = None,
+    terminate_signal: bool = False
 ):
     """Run non-interleaved 1F1B schedule, with communication between pipeline
     stages.
 
     Returns dictionary with losses if the last stage, empty dict otherwise."""
+    if terminate_signal:
+        return []
 
     if isinstance(model, list):
         assert (
@@ -1190,6 +1204,15 @@ def forward_backward_pipelining_without_interleaving(
         config=config,
     )
 
+    # CUDA event timer
+    timer = EventTimer()
+    eager_sync = True
+    global log_file
+    if log_file is None:
+        path = os.getenv("OUT_DIR")
+        path = path if path is not None else '.'
+        log_file = open(f"{path}/GPU{torch.distributed.get_rank()}_rank{torch.distributed.get_rank()}_1F1B.log", 'w')
+
     # Input, output tensors only need to be saved when doing backward passes
     input_tensors = None
     output_tensors = None
@@ -1210,6 +1233,7 @@ def forward_backward_pipelining_without_interleaving(
             checkpoint_activations_microbatch = None
 
         input_tensor = recv_forward(recv_tensor_shapes, config)
+        timer_id = timer.start(time.time(), eager_sync)
         output_tensor = forward_step(
             forward_step_func,
             data_iterator,
@@ -1221,10 +1245,7 @@ def forward_backward_pipelining_without_interleaving(
             collect_non_loss_data,
             checkpoint_activations_microbatch,
         )
-        # for (prev, _) in SLOW_LINKS:
-        #     if torch.distributed.get_rank() == prev:
-        #         time.sleep(SLEEP_TIME)
-        #         break
+        timer.end(timer_id, 'F')
         send_forward(output_tensor, send_tensor_shapes, config)
 
         if not forward_only:
@@ -1250,6 +1271,7 @@ def forward_backward_pipelining_without_interleaving(
         else:
             checkpoint_activations_microbatch = None
 
+        timer_id = timer.start(time.time(), eager_sync)
         output_tensor = forward_step(
             forward_step_func,
             data_iterator,
@@ -1261,6 +1283,7 @@ def forward_backward_pipelining_without_interleaving(
             collect_non_loss_data,
             checkpoint_activations_microbatch,
         )
+        timer.end(timer_id, 'F')
 
         if forward_only:
             send_forward(output_tensor, send_tensor_shapes, config)
@@ -1269,10 +1292,6 @@ def forward_backward_pipelining_without_interleaving(
                 input_tensor = recv_forward(recv_tensor_shapes, config)
 
         else:
-            # for (prev, _) in SLOW_LINKS:
-            #     if torch.distributed.get_rank() == prev:
-            #         time.sleep(SLEEP_TIME)
-            #         break
             output_tensor_grad = send_forward_recv_backward(
                 output_tensor, send_tensor_shapes, config
             )
@@ -1293,14 +1312,11 @@ def forward_backward_pipelining_without_interleaving(
                 if config.grad_sync_func is None or rank == 0:
                     enable_grad_sync()
 
+            timer_id = timer.start(time.time(), eager_sync)
             input_tensor_grad = backward_step(
                 input_tensor, output_tensor, output_tensor_grad, model_type, config
             )
-
-            # for (_, next) in SLOW_LINKS:
-            #     if torch.distributed.get_rank() == next:
-            #         time.sleep(SLEEP_TIME)
-            #         break
+            timer.end(timer_id, 'B')
             if last_iteration:
                 input_tensor = None
                 send_backward(input_tensor_grad, recv_tensor_shapes, config)
@@ -1327,14 +1343,11 @@ def forward_backward_pipelining_without_interleaving(
 
             output_tensor_grad = recv_backward(send_tensor_shapes, config)
 
+            timer_id = timer.start(time.time(), eager_sync)
             input_tensor_grad = backward_step(
                 input_tensor, output_tensor, output_tensor_grad, model_type, config
             )
-
-            # for (_, next) in SLOW_LINKS:
-            #     if torch.distributed.get_rank() == next:
-            #         time.sleep(SLEEP_TIME)
-            #         break
+            timer.end(timer_id, 'B')
             send_backward(input_tensor_grad, recv_tensor_shapes, config)
 
         # Launch any remaining grad reductions.
@@ -1342,6 +1355,11 @@ def forward_backward_pipelining_without_interleaving(
             enable_grad_sync()
             if config.grad_sync_func is not None:
                 config.grad_sync_func(model.parameters())
+
+    global iter_cnt
+    iter_cnt += 1
+    print_with_rank(f"Iteration {iter_cnt}")
+    timer.print_all(print_func=print_with_rank)
 
     if config.timers is not None:
         config.timers('forward-backward').stop()
