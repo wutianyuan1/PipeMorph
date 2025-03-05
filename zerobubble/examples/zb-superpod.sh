@@ -136,7 +136,7 @@ run_cmd="torchrun --nnodes $WORLD_SIZE \
   --node_rank $RANK \
   --master_addr $MASTER_ADDR \
   --master_port $MASTER_PORT \
-  --nproc_per_node=$SLURM_GPUS_PER_NODE ${DIR}/pretrain_gpt.py $@ ${options}"
+  --nproc_per_node=1 ${DIR}/pretrain_gpt.py $@ ${options}"
 
 if [ ! -z "$PROFILED" ]; then
   run_cmd="nsys profile -s none -t nvtx,cuda \
@@ -161,5 +161,10 @@ set +x
 
 if [[ $RANK -eq 0 ]]; then
   kill $REDIS_PID
-  python ./utils/plot_real.py --num_stages $PIPELINE_SIZE --dp_tp_prod $TP_SIZE
+  if [[ "$METHOD" == "1F1B" ]]; then
+    PLOT_FILE="plot_1f1b"
+  else
+    PLOT_FILE="plot_real"
+  fi
+  python ./utils/$PLOT_FILE.py --num_stages $PIPELINE_SIZE --dp_tp_prod $(( $TP_SIZE * $DP_SIZE ))
 fi
