@@ -1,6 +1,7 @@
 #!/bin/bash
 
-delay_values=("0.03" "0.06")
+delay_values=("0.03")
+slowlink_values=("0_1,6_7" "0_1,3_4,6_7")
 
 # 1DP, 1TP, 4PP
 if [ "$MODEL" == "7B" ]; then
@@ -17,7 +18,7 @@ if [ "$MODEL" == "7B" ]; then
 
     export TRAIN_SAMPLES=$(( $DP_SIZE * 180 ))
     
-    slowlink_values=("0_1" "2_3")
+    # slowlink_values=("0_1" "2_3")
 fi
 
 # 1DP, 1TP, 8PP
@@ -35,7 +36,7 @@ if [ "$MODEL" == "14B" ]; then
 
     export TRAIN_SAMPLES=$(( $DP_SIZE * 360 ))
 
-    slowlink_values=("0_1" "6_7")
+    # slowlink_values=("0_1" "6_7")
 fi
 
 # 4DP, 2TP, 8PP
@@ -53,7 +54,7 @@ if [ "$MODEL" == "30B" ]; then
 
     export TRAIN_SAMPLES=$(( $DP_SIZE * 360 ))
 
-    slowlink_values=("0_1" "6_7")
+    # slowlink_values=("0_1" "6_7")
 fi
 
 # 2DP, 4TP, 8PP
@@ -71,7 +72,7 @@ if [ "$MODEL" == "60B" ]; then
 
     export TRAIN_SAMPLES=$(( $DP_SIZE * 360 ))
 
-    slowlink_values=("0_1" "6_7")
+    # slowlink_values=("0_1" "6_7")
 fi
 
 for delay in "${delay_values[@]}"; do
@@ -82,8 +83,8 @@ for delay in "${delay_values[@]}"; do
         export NUM_DELEGATES=6
     fi
     for slowlink in "${slowlink_values[@]}"; do
-        python $REPO_PATH/experiments/single/set_trace.py --iter 7 --slowlink "$slowlink" --delay_in_sec "$delay"
-        export OUT_DIR="$REPO_PATH/experiments/single/$MODEL/$METHOD/$slowlink/$delay"
+        python $REPO_PATH/experiments/multiple/set_trace.py --iter 7 --slowlink "$slowlink" --delay_in_sec "$delay"
+        export OUT_DIR="$REPO_PATH/experiments/multiple/$MODEL/$METHOD/$slowlink/$delay"
         mkdir -p "$OUT_DIR"
         $REPO_PATH/zerobubble/examples/zb-superpod.sh
     done

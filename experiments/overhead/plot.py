@@ -46,7 +46,7 @@ method_times_dict = {method: method_times[i].tolist() for (i, method) in enumera
 method_times_dict['ZB-CPU'] = method_times_dict['ALL-CPU']
 method_times_dict['ZB-CPU-ReSchedule'] = method_times_dict['ALL-CPU']
 
-x = np.arange(len(MODELS)) + (len(MODELS) - 1) / 2 * WIDTH
+x = np.arange(len(MODELS)) + (len(METHODS) - 1) / 2 * WIDTH
 plt.xticks(x, MODELS, fontsize=14)
 plt.yticks(fontsize=14)
 plt.xlabel('Model', fontsize=14)

@@ -1,7 +1,7 @@
 export REPO_PATH="/home/$USER/workspace/PipeMorph"
 
-method_values=("ZB-CPU" "ZB" "1F1B")
-model_values=("60B")
+method_values=("ZB-CPU-ReSchedule" "ZB-CPU" "ZB" "1F1B")
+model_values=("14B")
 
 for method in "${method_values[@]}"; do
     for model in "${model_values[@]}"; do
@@ -32,12 +32,6 @@ for method in "${method_values[@]}"; do
             export GPUS_PER_NODE=8
         fi
 
-        if [ $GPUS_PER_NODE -eq 8 ]; then
-            PARTITION="large"
-        else
-            PARTITION="normal"
-        fi
-
-        srun --account lsdisttrain --partition $PARTITION --nodes $NODES --gpus-per-node $GPUS_PER_NODE --no-container-mount-home --container-remap-root --container-mounts=/home/$USER/workspace:/home/$USER/workspace --container-workdir=/home/$USER/workspace --container-writable --container-image $LOCAL_IMAGE $REPO_PATH/experiments/single/test.sh
+        srun --account lsdisttrain --partition large --nodes $NODES --gpus-per-node 8 --no-container-mount-home --container-remap-root --container-mounts=/home/$USER/workspace:/home/$USER/workspace --container-workdir=/home/$USER/workspace --container-writable --container-image $LOCAL_IMAGE $REPO_PATH/experiments/multiple/test.sh
     done
 done

@@ -54,7 +54,7 @@ for slowlink in ['First', 'Last']:
             method_times.append(times)
         method_times = np.array(method_times)
         print(f"{slowlink}, {delay}: Optimize ratio: {method_times[1] / method_times[3]}")  # ZB / ours
-        x = np.arange(len(MODELS)) + (len(MODELS) - 1) / 2 * WIDTH
+        x = np.arange(len(MODELS)) + (len(METHODS) - 1) / 2 * WIDTH
         plt.xticks(x, MODELS, fontsize=14)
         plt.yticks(fontsize=14)
         plt.xlabel('Model', fontsize=14)
