@@ -196,7 +196,7 @@ def pretrain(train_valid_test_dataset_provider,
                                    verbose=True, write_to_tensorboard=not args.skip_train)
 
     # Madoka: the CPU delegates need an explict signal to shutdown, so we pass a "terminate_signal" to the scheduler to shutdown the process.
-    if os.getenv("METHOD") != '1F1B':
+    if 'ZB-CPU' in os.getenv("METHOD"):
         forward_backward_func = get_forward_backward_func(use_delegate=True)
         forward_backward_func(terminate_signal=True)
 
@@ -846,7 +846,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         use_delegate = True if use_delegate_tensor[0] == 1 else False
 
         if os.getenv("METHOD") == "ZB":
-            use_delegate = (True if iteration == 1 else False)
+            use_delegate = False
         elif os.getenv("METHOD") == "ALL-CPU":
             use_delegate = True
 

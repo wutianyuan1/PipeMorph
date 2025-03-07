@@ -32,7 +32,7 @@ for method in METHODS:
                 with open(f"{dir}/log.txt", 'r') as f:
                     iters = f.readlines()[-COUNT_LAST_ITERS :]
                     iters = [iter.split(' | ')[2] for iter in iters]
-                    iter_times = np.array([float(re.findall(pattern, iter)[0]) for iter in iters])
+                    iter_times = np.array([float(re.findall(pattern, iter)[0]) for iter in iters]) / 1000.0
                     avg_iter_time = np.mean(iter_times)
                     std_iter_time = np.std(iter_times)
                     # print(slowlink, delay, model, method, avg_iter_time, std_iter_time)
@@ -52,8 +52,8 @@ for method in METHODS:
 method_times = np.array(method_times)
 plt.xticks(x, DELAYS, fontsize=14)
 plt.yticks(fontsize=14)
-plt.xlabel('Delay In Second', fontsize=14)
-plt.ylabel('Time Per\nIteration (ms)', fontsize=14)
+plt.xlabel('Network Delay (s)', fontsize=14)
+plt.ylabel('Time Per\nIteration (s)', fontsize=14)
 plt.grid(linestyle='-.')
 legend = plt.legend(fontsize=12)
 plt.savefig(f'{PATH}/{MODEL}.pdf', bbox_inches='tight', bbox_extra_artists=(legend,))

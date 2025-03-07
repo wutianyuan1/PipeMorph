@@ -14,7 +14,7 @@ COUNT_LAST_ITERS = 5
 WIDTH = 0.2
 DELAY = "0.03"
 
-plt.figure(figsize=(20, 2))
+plt.figure(figsize=(14, 2))
 for figid, slowlink in enumerate(SLOWLINKS):
     x = np.arange(len(MODELS))
     plt.subplot(1, 4, figid + 1)
@@ -32,7 +32,7 @@ for figid, slowlink in enumerate(SLOWLINKS):
                 with open(f"{dir}/log.txt", 'r') as f:
                     iters = f.readlines()[-COUNT_LAST_ITERS :]
                     iters = [iter.split(' | ')[2] for iter in iters]
-                    iter_times = np.array([float(re.findall(pattern, iter)[0]) for iter in iters])
+                    iter_times = np.array([float(re.findall(pattern, iter)[0]) for iter in iters])/1000.0
                     avg_iter_time = np.mean(iter_times)
                     std_iter_time = np.std(iter_times)
                     # print(slowlink, delay, model, method, avg_iter_time, std_iter_time)
@@ -41,7 +41,7 @@ for figid, slowlink in enumerate(SLOWLINKS):
             except:
                     times.append(0)
                     std_times.append(0)
-            plt.text(x[i], times[-1] + 1.5*std_times[-1], round(times[-1]), va='bottom', ha='center')
+            plt.text(x[i], times[-1] + 1.5*std_times[-1], "{:.2f}".format(times[-1]), fontdict={"fontsize": 12}, va='bottom', ha='center')
         if method == 'ZB-CPU':
             label = 'PipeMorph-CPU'
         elif method == 'ZB-CPU-ReSchedule':
@@ -57,12 +57,13 @@ for figid, slowlink in enumerate(SLOWLINKS):
     x = np.arange(len(MODELS)) + (len(METHODS) - 1) / 2 * WIDTH
     plt.xticks(x, [], fontsize=14)
     plt.yticks(fontsize=14)
-    # plt.xlabel('Model', fontsize=14)
+    plt.xlabel(slowlink, fontsize=14)
     if figid == 0:
-        plt.ylabel('Time Per\nIteration (ms)', fontsize=12)
+        plt.ylabel('Time Per\nIteration (s)', fontsize=12)
     # plt.title(f'{float(delay) * 1000}ms Delay on {slowlink} Link')
     plt.grid(linestyle='-.')
 legend = plt.figlegend(loc=(0.3, 0.88), ncols=4, fontsize=12)
+plt.tight_layout(pad=1.05)
 plt.savefig(f'{PATH}/multiple.pdf', bbox_inches='tight', bbox_extra_artists=(legend,))
 plt.savefig(f'{PATH}/multiple.png', bbox_inches='tight', bbox_extra_artists=(legend,))
 plt.close()

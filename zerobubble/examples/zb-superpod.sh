@@ -5,6 +5,8 @@ export LD_PRELOAD=/home/$USR_HOME/workspace/PipeMorph/zerobubble/megatron/core/f
 export ENABLE_ZERO_BUBBLE=1
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
+echo "==== SLEEPTIME: ${SLEEP_TIME}"
+
 cd /home/$USR_HOME/workspace/PipeMorph/zerobubble
 source ~/.bashrc
 echo `pwd`
@@ -136,7 +138,7 @@ run_cmd="torchrun --nnodes $WORLD_SIZE \
   --node_rank $RANK \
   --master_addr $MASTER_ADDR \
   --master_port $MASTER_PORT \
-  --nproc_per_node=1 ${DIR}/pretrain_gpt.py $@ ${options}"
+  --nproc_per_node=${GPUS_PER_NODE} ${DIR}/pretrain_gpt.py $@ ${options}"
 
 if [ ! -z "$PROFILED" ]; then
   run_cmd="nsys profile -s none -t nvtx,cuda \

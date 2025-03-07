@@ -11,9 +11,9 @@ MODELS = ['7B', '14B', '30B', '60B']
 METHODS = ['1F1B', 'ZB', 'ALL-CPU']
 DELAYS = ['0.03', '0.06']
 HATCHES = ['//', '--', '\\\\', '||']
-WIDTH = 0.2
+WIDTH = 0.25
 
-plt.figure(figsize=(7, 2.5))
+plt.figure(figsize=(7, 2))
 method_times = []
 x = np.arange(len(MODELS))
 for method in METHODS:
@@ -29,14 +29,14 @@ for method in METHODS:
             with open(f"{dir}/log.txt", 'r') as f:
                 iters = f.readlines()[2:7]
                 iters = [iter.split(' | ')[2] for iter in iters]
-                iter_times = np.array([float(re.findall(pattern, iter)[0]) for iter in iters])
+                iter_times = np.array([float(re.findall(pattern, iter)[0]) for iter in iters])/1000.0
                 avg_iter_time = np.mean(iter_times)
                 times.append(avg_iter_time)
                 std_times.append(np.std(iter_times))
         except:
                 times.append(0)
                 std_times.append(0)
-        plt.text(x[i], times[-1] + 1.5 * std_times[-1], round(times[-1]), va='bottom', ha='center')
+        plt.text(x[i], times[-1] + 2 * std_times[-1], "{:.2f}".format(times[-1]), va='bottom', ha='center', fontsize=12, zorder=100)
     plt.bar(x, times, width=WIDTH, label=method, zorder=100, edgecolor='black', hatch=HATCHES[METHODS.index(method)])
     plt.errorbar(x, times, yerr=std_times, color='black', fmt='o', ecolor='black', capsize=5, zorder=100)
     x = x + WIDTH
@@ -47,12 +47,13 @@ method_times_dict['ZB-CPU'] = method_times_dict['ALL-CPU']
 method_times_dict['ZB-CPU-ReSchedule'] = method_times_dict['ALL-CPU']
 
 x = np.arange(len(MODELS)) + (len(METHODS) - 1) / 2 * WIDTH
+plt.ylim(0, 1.7)
 plt.xticks(x, MODELS, fontsize=14)
 plt.yticks(fontsize=14)
 plt.xlabel('Model', fontsize=14)
-plt.ylabel('Time Per\nIteration (ms)', fontsize=12)
+plt.ylabel('Time Per\nIteration (s)', fontsize=12)
 plt.grid(linestyle='-.')
-legend = plt.legend(fontsize=12)
+legend = plt.legend(ncols=3, fontsize=12)
 plt.savefig(f'{ALL_CPU_PATH}/overhead.pdf', bbox_inches='tight', bbox_extra_artists=(legend,))
 print(method_times_dict, file=open(f'{ALL_CPU_PATH}/times.txt', 'w'))
 plt.close()
