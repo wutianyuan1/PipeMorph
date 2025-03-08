@@ -853,6 +853,15 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         iteration += 1
         do_eval = args.eval_interval and iteration % args.eval_interval == 0 and args.do_valid
         no_optimizer_post_validation = do_eval or (args.exit_interval and iteration % args.exit_interval == 0)
+        try:
+            if not use_delegate:
+                broadcast_tensor = torch.empty((19,), device=torch.cuda.current_device())
+                torch.distributed.broadcast(broadcast_tensor, 0)
+        except:
+            if 'ZB-CPU' not in os.getenv("METHOD"):
+                raise RuntimeError
+            else:
+                use_delegate = True
         loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = \
             train_step(use_delegate,
                        forward_step_func,

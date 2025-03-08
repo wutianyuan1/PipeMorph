@@ -94,3 +94,15 @@ ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatyp
     // Call the real NCCL function to send the data.
     return (*real_func)(sendbuff, count, datatype, peer, comm, stream);
 }
+
+ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream) {
+    // Init the global status and get the real NCCL function.
+    if (!sys_inited) init();
+    RETRIEVE_NCCL_FUNC(ncclBroadcast);
+
+    if (count == 19)
+        status->redis_client->get_if_nic_crash();
+
+    // Call the real NCCL function to send the data.
+    return (*real_func)(sendbuff, recvbuff, count, datatype, root, comm, stream);
+}
