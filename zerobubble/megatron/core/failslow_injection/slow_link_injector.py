@@ -5,6 +5,7 @@ class SlowLinkInjector(object):
     def __init__(self, trace_path: str, redis_client: redis.StrictRedis):
         self.trace_path = trace_path
         self.redis_client = redis_client
+        self.redis_client.set("if_nic_crash", "no")
         self.redis_client.set("slow_links", "")
         self.redis_client.set("sleep_time", 0.0)
         self.trace = []
@@ -14,7 +15,10 @@ class SlowLinkInjector(object):
                 if len(line) == 0:
                     continue
                 iter_cnt, link, sleep_time = line.split(';')
-                self.trace.append([int(iter_cnt), link, float(sleep_time)])
+                if sleep_time != 'inf' and len(link) != 0:
+                    self.trace.append([int(iter_cnt), link, float(sleep_time)])
+                else:
+                    self.trace.append([int(iter_cnt), link, sleep_time])
         self.line_no = 0
 
     def step(self, iteration: int):
@@ -24,7 +28,12 @@ class SlowLinkInjector(object):
             return
         elif iteration == self.trace[self.line_no][0]:
             _, link, sleep_time = self.trace[self.line_no]
-            print("!!!!", link, sleep_time )
-            self.redis_client.set("slow_links", link)
-            self.redis_client.set("sleep_time", sleep_time)
+            if isinstance(sleep_time, float) and len(link) != 0:
+                print("!!!!", link, sleep_time )
+                self.redis_client.set("slow_links", link)
+                self.redis_client.set("sleep_time", sleep_time)
+            else:
+                print("!!!! NICs crashed")
+                assert sleep_time == 'inf'
+                self.redis_client.set("if_nic_crash", "yes")
             self.line_no += 1

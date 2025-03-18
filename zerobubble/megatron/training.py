@@ -196,7 +196,7 @@ def pretrain(train_valid_test_dataset_provider,
                                    verbose=True, write_to_tensorboard=not args.skip_train)
 
     # Madoka: the CPU delegates need an explict signal to shutdown, so we pass a "terminate_signal" to the scheduler to shutdown the process.
-    if os.getenv("METHOD") != '1F1B':
+    if 'ZB-CPU' in os.getenv("METHOD"):
         forward_backward_func = get_forward_backward_func(use_delegate=True)
         forward_backward_func(terminate_signal=True)
 
@@ -845,11 +845,25 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         torch.distributed.all_reduce(use_delegate_tensor, op=torch.distributed.ReduceOp.MAX)
         use_delegate = True if use_delegate_tensor[0] == 1 else False
 
+        if os.getenv("METHOD") == "ZB":
+            use_delegate = False
+        elif os.getenv("METHOD") == "ALL-CPU":
+            use_delegate = True
+
         iteration += 1
         do_eval = args.eval_interval and iteration % args.eval_interval == 0 and args.do_valid
         no_optimizer_post_validation = do_eval or (args.exit_interval and iteration % args.exit_interval == 0)
+        try:
+            if not use_delegate:
+                broadcast_tensor = torch.empty((19,), device=torch.cuda.current_device())
+                torch.distributed.broadcast(broadcast_tensor, 0)
+        except:
+            if 'ZB-CPU' not in os.getenv("METHOD"):
+                raise RuntimeError
+            else:
+                use_delegate = True
         loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = \
-            train_step(use_delegate if os.getenv("METHOD") != "ZB" else (True if iteration == 1 else False),
+            train_step(use_delegate,
                        forward_step_func,
                        train_data_iterator,
                        model,

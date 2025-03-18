@@ -5,6 +5,8 @@ export LD_PRELOAD=/home/$USR_HOME/workspace/PipeMorph/zerobubble/megatron/core/f
 export ENABLE_ZERO_BUBBLE=1
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
+echo "==== SLEEPTIME: ${SLEEP_TIME}"
+
 cd /home/$USR_HOME/workspace/PipeMorph/zerobubble
 source ~/.bashrc
 echo `pwd`
@@ -29,7 +31,7 @@ if [ -z "$WORLD_SIZE" ]; then
 fi
 
 if [ -z "$EXIT_INTERVAL" ]; then
-  EXIT_INTERVAL=1000
+  EXIT_INTERVAL=10000
 fi
 
 WORLD_SIZE_IN_GPUS=4
@@ -65,6 +67,10 @@ if [ -z "$TRAIN_SAMPLES" ]; then
   TRAIN_SAMPLES=360
 fi
 
+if [ -z "$SEQ_LENGTH" ]; then
+  SEQ_LENGTH=1024
+fi
+
 options=" \
   --tensor-model-parallel-size $TP_SIZE \
   --pipeline-model-parallel-size $PIPELINE_SIZE \
@@ -72,7 +78,7 @@ options=" \
   --hidden-size $HIDDEN_SIZE \
   --num-attention-heads $ATTENTION_HEADS \
   --exit-interval $EXIT_INTERVAL \
-  --seq-length 1024 \
+  --seq-length $SEQ_LENGTH \
   --max-position-embeddings 2048 \
   --micro-batch-size $MICRO_BATCH_SIZE \
   --global-batch-size $GLOBAL_BATCH_SIZE \
@@ -136,7 +142,7 @@ run_cmd="torchrun --nnodes $WORLD_SIZE \
   --node_rank $RANK \
   --master_addr $MASTER_ADDR \
   --master_port $MASTER_PORT \
-  --nproc_per_node=$SLURM_GPUS_PER_NODE ${DIR}/pretrain_gpt.py $@ ${options}"
+  --nproc_per_node=${GPUS_PER_NODE} ${DIR}/pretrain_gpt.py $@ ${options}"
 
 if [ ! -z "$PROFILED" ]; then
   run_cmd="nsys profile -s none -t nvtx,cuda \
@@ -161,5 +167,10 @@ set +x
 
 if [[ $RANK -eq 0 ]]; then
   kill $REDIS_PID
-  python ./utils/plot_real.py --num_stages $PIPELINE_SIZE --dp_tp_prod $TP_SIZE
+  if [[ "$METHOD" == "1F1B" ]]; then
+    PLOT_FILE="plot_1f1b"
+  else
+    PLOT_FILE="plot_real"
+  fi
+  python ./utils/$PLOT_FILE.py --num_stages $PIPELINE_SIZE --dp_tp_prod $(( $TP_SIZE * $DP_SIZE ))
 fi
