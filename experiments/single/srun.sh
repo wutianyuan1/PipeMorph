@@ -1,7 +1,7 @@
 export REPO_PATH="/home/$USER/workspace/PipeMorph"
 
-method_values=("ZB-CPU" "ZB" "1F1B")
-model_values=("60B")
+method_values=("ZB-CPU-ReSchedule" "ZB-CPU" "ZB" "1F1B")
+model_values=("7B" "14B" "30B" "60B")
 
 for method in "${method_values[@]}"; do
     for model in "${model_values[@]}"; do

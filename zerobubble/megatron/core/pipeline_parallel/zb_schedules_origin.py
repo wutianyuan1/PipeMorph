@@ -889,7 +889,8 @@ class ZeroBubbleScheduler:
                     hh.wait()
             input_tensor = input_tensor[0]
             a = torch.sum(input_tensor[0])
-            assert a != 111.111
+            if a != 111.111:
+                pass
         if get_args().profile:
             torch.cuda.nvtx.range_push(f'F{scheduled_node.minibatch}')
         if self.run_timer:
@@ -939,7 +940,8 @@ class ZeroBubbleScheduler:
                         hh.wait()
                 output_tensor_grad = output_tensor_grad[0]
                 a = torch.sum(output_tensor_grad[0])
-                assert a != 111.111
+                if a != 111.111:
+                    pass
             if get_args().profile:
                 torch.cuda.nvtx.range_push(f'B{scheduled_node.minibatch}')
             if self.run_timer:

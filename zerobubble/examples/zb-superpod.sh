@@ -31,7 +31,7 @@ if [ -z "$WORLD_SIZE" ]; then
 fi
 
 if [ -z "$EXIT_INTERVAL" ]; then
-  EXIT_INTERVAL=1000
+  EXIT_INTERVAL=10000
 fi
 
 WORLD_SIZE_IN_GPUS=4
@@ -67,6 +67,10 @@ if [ -z "$TRAIN_SAMPLES" ]; then
   TRAIN_SAMPLES=360
 fi
 
+if [ -z "$SEQ_LENGTH" ]; then
+  SEQ_LENGTH=1024
+fi
+
 options=" \
   --tensor-model-parallel-size $TP_SIZE \
   --pipeline-model-parallel-size $PIPELINE_SIZE \
@@ -74,7 +78,7 @@ options=" \
   --hidden-size $HIDDEN_SIZE \
   --num-attention-heads $ATTENTION_HEADS \
   --exit-interval $EXIT_INTERVAL \
-  --seq-length 1024 \
+  --seq-length $SEQ_LENGTH \
   --max-position-embeddings 2048 \
   --micro-batch-size $MICRO_BATCH_SIZE \
   --global-batch-size $GLOBAL_BATCH_SIZE \

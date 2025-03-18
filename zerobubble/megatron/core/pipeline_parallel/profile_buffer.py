@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import torch.distributed as dist
 
+PROFILE_BUFFER_SIZE = 32
+
 
 class ProfileBuffer(object):
     def __init__(self, world_size: int, pp_stages: int) -> None:
@@ -10,6 +12,7 @@ class ProfileBuffer(object):
         self.rank = dist.get_rank()
         self.op2idx = {'F': 0, 'B': 1, 'W': 2}
         self.op_count = [0, 0, 0]
+        self.buffer = torch.zeros((3, PROFILE_BUFFER_SIZE), dtype=torch.float, device='cpu')  # [F, B, W] * PROFILE_BUFFER_SIZE
         self.profiles = torch.zeros((3, self.world_size), dtype=torch.float, device='cpu')  # [F, B, W] * WORLD_SIZE
 
     def reset(self):
@@ -19,9 +22,13 @@ class ProfileBuffer(object):
     def record(self, op_type: str, elapsed_time: float):
         idx = self.op2idx[op_type]
         self.op_count[idx] += 1
-        self.profiles[idx, self.rank] = self.profiles[idx, self.rank] * (self.op_count[idx] - 1) / self.op_count[idx] + elapsed_time / self.op_count[idx]
+        # Caches the most recently PROFILE_BUFFER_SIZE exec times
+        self.buffer[idx, self.op_count[idx] % PROFILE_BUFFER_SIZE] = elapsed_time
+        # self.profiles[idx, self.rank] = self.profiles[idx, self.rank] * (self.op_count[idx] - 1) / self.op_count[idx] + elapsed_time / self.op_count[idx]
 
     def get_stage_exec_times(self):
+        for i in range(3):
+            self.profiles[i, self.rank] = torch.median(self.buffer[i, :]) # use the median exec time as the profile time
         profiles_gpu = self.profiles.cuda(torch.cuda.current_device())
         dist.all_reduce(profiles_gpu)
         profiles_array = profiles_gpu.cpu().numpy()

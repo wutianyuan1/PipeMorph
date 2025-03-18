@@ -10,7 +10,7 @@ import memcpy
 import numpy as np
 
 from typing import Iterator, List, Union
-from megatron import core, get_num_microbatches, print_rank_0
+from megatron import get_num_microbatches, print_rank_0
 from megatron.core import parallel_state
 from megatron.core.utils import get_model_config, get_model_type
 from megatron.core.pipeline_parallel.schedules import (
@@ -95,7 +95,7 @@ class OurScheduler:
 
     def schedule_f(self, scheduled_node: ScheduledNode, op_id: int):
         delegate_id = op_id % self.delegate_manager.num_delegates
-        if core.parallel_state.is_pipeline_first_stage():
+        if parallel_state.is_pipeline_first_stage():
             input_tensor = [None] * len(self.recv_tensor_shapes)
         else:
             if RECV_WAY == 'queue':
@@ -120,7 +120,8 @@ class OurScheduler:
                         cpu_signal[0] = UNREADY_SIGNAL
                         break
                 input_tensor = [gpu_tensor]
-            assert torch.sum(input_tensor[0]) != 111.111
+            if torch.sum(input_tensor[0]) != 111.111:
+                pass
         with torch.cuda.stream(self.comp_stream):
             timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
             with nvtx.range(scheduled_node.type):
@@ -136,7 +137,7 @@ class OurScheduler:
                     checkpoint_activations_microbatch=None,
                 )
             self.timer.end(timer_id, "F")
-        if not core.parallel_state.is_pipeline_last_stage():
+        if not parallel_state.is_pipeline_last_stage():
             if SEND_WAY == 'queue':
                 self.delegate_manager.queues[f'send_forward_task_{delegate_id}'].put(output_tensor[0].detach().cpu())
             else:
@@ -160,7 +161,7 @@ class OurScheduler:
             input_tensor = self.input_tensors.pop(0)
             output_tensor = self.output_tensors.pop(0)
 
-            if core.parallel_state.is_pipeline_last_stage():
+            if parallel_state.is_pipeline_last_stage():
                 # Keep the original behavior when we do a dummy communication
                 output_tensor_grad = [None] * len(self.send_tensor_shapes)
             else:
@@ -187,7 +188,8 @@ class OurScheduler:
                             cpu_signal[0] = UNREADY_SIGNAL
                             break
                     output_tensor_grad = [gpu_tensor]
-                assert torch.sum(output_tensor_grad[0]) != 111.111
+                if torch.sum(output_tensor_grad[0]) != 111.111:
+                    pass
 
             with torch.cuda.stream(self.comp_stream):
                 timer_id = self.timer.start(self.t_start, eager_sync=timer_sync)
@@ -330,9 +332,9 @@ class OurScheduler:
         assert send_tensor_shapes[0] == recv_tensor_shapes[0]
         self.data_size = torch.prod(torch.tensor(send_tensor_shapes[0])).item() * FLOAT16_NBYTES
         if RECV_WAY == "shm":
-            if not core.parallel_state.is_pipeline_first_stage():
+            if not parallel_state.is_pipeline_first_stage():
                 self.rf_signals = [torch.zeros((1,), device=torch.cuda.current_device(), dtype=self.config.pipeline_dtype) for _ in range(self.num_microbatches)]
-            if not core.parallel_state.is_pipeline_last_stage():
+            if not parallel_state.is_pipeline_last_stage():
                 self.rb_signals = [torch.zeros((1,), device=torch.cuda.current_device(), dtype=self.config.pipeline_dtype) for _ in range(self.num_microbatches)]
 
     def run(self):
