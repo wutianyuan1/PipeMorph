@@ -203,6 +203,7 @@ class DelegateManager():
         self.shms = {}
         self.delegates = {}
         tp_dp_idx = parallel_state.get_data_parallel_rank() * TP_MAXSIZE * DP_MAXSIZE + parallel_state.get_tensor_model_parallel_rank() * TP_MAXSIZE
+        rank = dist.get_rank()
         # (1) Create: send to the next node (send_forward)
         if my_stage != total_stages - 1:  # not the last PP stage
             for qid in range(self.num_delegates):
@@ -211,7 +212,7 @@ class DelegateManager():
                 dist_info_send_forward['MASTER_PORT'] = 12306 + tp_dp_idx + qid
                 self.queues[f'send_forward_msg_{qid}'] = mp.Queue()
                 self.queues[f'send_forward_task_{qid}'] = mp.Queue()
-                self.shms[f'send_forward_shm_{qid}'] = SharedMemory(create=True, size=2 * num_microbatches * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                self.shms[f'send_forward_shm_{qid}'] = SharedMemory(name=f'send_forward_shm_{qid}_{rank}', create=True, size=2 * num_microbatches * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
                 memcpy.register_pinned_memory(addr_of(self.shms[f'send_forward_shm_{qid}'].buf, 0), self.shms[f'send_forward_shm_{qid}'].size)
                 self.delegates[f'send_forward_{qid}'] = start_communication_delegate(f'SendForward{qid}', self.queues[f'send_forward_msg_{qid}'], self.queues[f'send_forward_task_{qid}'], self.shms[f'send_forward_shm_{qid}'], dist_info_send_forward)
 
@@ -223,7 +224,7 @@ class DelegateManager():
                 dist_info_send_backward['MASTER_PORT'] = 23306 + tp_dp_idx + qid
                 self.queues[f'send_backward_msg_{qid}'] = mp.Queue()
                 self.queues[f'send_backward_task_{qid}'] = mp.Queue()
-                self.shms[f'send_backward_shm_{qid}'] = SharedMemory(create=True, size=2 * num_microbatches * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                self.shms[f'send_backward_shm_{qid}'] = SharedMemory(name=f'send_backward_shm_{qid}_{rank}', create=True, size=2 * num_microbatches * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
                 memcpy.register_pinned_memory(addr_of(self.shms[f'send_backward_shm_{qid}'].buf, 0), self.shms[f'send_backward_shm_{qid}'].size)
                 self.delegates[f'send_backward_{qid}'] = start_communication_delegate(f'SendBackward{qid}', self.queues[f'send_backward_msg_{qid}'], self.queues[f'send_backward_task_{qid}'], self.shms[f'send_backward_shm_{qid}'], dist_info_send_backward)
 
@@ -235,7 +236,7 @@ class DelegateManager():
                 dist_info_recv_forward['MASTER_PORT'] = 12306 + tp_dp_idx + qid
                 self.queues[f'recv_forward_msg_{qid}'] = mp.Queue()
                 self.queues[f'recv_forward_task_{qid}'] = mp.Queue()
-                self.shms[f'recv_forward_shm_{qid}'] = SharedMemory(create=True, size=2 * num_microbatches * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                self.shms[f'recv_forward_shm_{qid}'] = SharedMemory(name=f'recv_forward_shm_{qid}_{rank}', create=True, size=2 * num_microbatches * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
                 memcpy.register_pinned_memory(addr_of(self.shms[f'recv_forward_shm_{qid}'].buf, 0), self.shms[f'recv_forward_shm_{qid}'].size)
                 self.delegates[f'recv_forward_{qid}'] = start_communication_delegate(f'RecvForward{qid}', self.queues[f'recv_forward_msg_{qid}'], self.queues[f'recv_forward_task_{qid}'], self.shms[f'recv_forward_shm_{qid}'], dist_info_recv_forward)
 
@@ -247,7 +248,7 @@ class DelegateManager():
                 dist_info_recv_backward['MASTER_PORT'] = 23306 + tp_dp_idx + qid
                 self.queues[f'recv_backward_msg_{qid}'] = mp.Queue()
                 self.queues[f'recv_backward_task_{qid}'] = mp.Queue()
-                self.shms[f'recv_backward_shm_{qid}'] = SharedMemory(create=True, size=2 * num_microbatches * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
+                self.shms[f'recv_backward_shm_{qid}'] = SharedMemory(name=f'recv_backward_shm_{qid}_{rank}', create=True, size=2 * num_microbatches * (torch.prod(torch.tensor(dele_dshape)).item() + 1))
                 memcpy.register_pinned_memory(addr_of(self.shms[f'recv_backward_shm_{qid}'].buf, 0), self.shms[f'recv_backward_shm_{qid}'].size)
                 self.delegates[f'recv_backward_{qid}'] = start_communication_delegate(f'RecvBackward{qid}', self.queues[f'recv_backward_msg_{qid}'], self.queues[f'recv_backward_task_{qid}'], self.shms[f'recv_backward_shm_{qid}'], dist_info_recv_backward)
 

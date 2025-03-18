@@ -4,6 +4,8 @@
 #include <vector>
 #include <tuple>
 #include <sstream>
+#include <stdexcept>
+#include <cassert>
 
 
 class Client {
@@ -85,5 +87,16 @@ public:
             }
         }
         return ret;
+    }
+
+    void get_if_nic_crash() {
+        int status = 0;
+        std::string reply = _get_from_redis("if_nic_crash", &status);
+        if (status != -1) {
+            std::string crashed = "yes";
+            if (reply == crashed) {
+                throw std::runtime_error("NIC Crash!");
+            }
+        }
     }
 };
