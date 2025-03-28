@@ -34,7 +34,7 @@ class Batch(ABC):
         x, y = self.execution_begin, stage
         rect = patches.Rectangle((x, y), self.execution_time, height, linewidth=1, edgecolor='black', facecolor=self.color)
         ax.add_patch(rect)
-        ax.text(x + self.execution_time / 4, y + height / 2, repr(self))
+        ax.text(x + self.execution_time / 4 if len(repr(self)) == 1 else x, y + height / 2, repr(self), fontdict={"fontsize": 14 if len(repr(self)) == 1 else 11}) #weight='bold' if len(repr(self)) == 2 else 'normal')
 
 
 class BubbleBatch(Batch):
@@ -43,7 +43,7 @@ class BubbleBatch(Batch):
         self.color = '#FFFFFF'
 
     def __repr__(self):
-        return f"Z{self.batch_idx}"
+        return f"Z{self.batch_idx + 1}"
 
 
 class ForwardBatch(Batch):
@@ -53,7 +53,7 @@ class ForwardBatch(Batch):
         self.type = 'F'
 
     def __repr__(self):
-        return f"F{self.batch_idx}"
+        return f"{self.batch_idx + 1}"
 
 
 class BackwardWeightBatch(Batch):
@@ -63,7 +63,7 @@ class BackwardWeightBatch(Batch):
         self.type = 'W'
 
     def __repr__(self):
-        return f"W{self.batch_idx}"
+        return f"{self.batch_idx + 1}"
 
 
 class BackwardInputBatch(Batch):
@@ -73,7 +73,7 @@ class BackwardInputBatch(Batch):
         self.type = 'B'
 
     def __repr__(self):
-        return f"B{self.batch_idx}"
+        return f"{self.batch_idx + 1}"
 
 
 class BackwardBatch(Batch):
@@ -83,4 +83,4 @@ class BackwardBatch(Batch):
         self.type = 'B'
 
     def __repr__(self):
-        return f"B{self.batch_idx}"
+        return f"B{self.batch_idx + 1}"

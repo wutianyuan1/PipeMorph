@@ -56,7 +56,7 @@ class PipeDreamPolicy(PipelinePolicy):
                 minval = cur
                 minidx = i
         # If in-memory activations >= num_stages, then we cannot execute subsequent forwards
-        if gpu_mem >= self.num_stages and isinstance(task_queue[minidx], ForwardBatch):
+        if gpu_mem >= 2 * self.num_stages and isinstance(task_queue[minidx], ForwardBatch):
             return None
         return minidx
 

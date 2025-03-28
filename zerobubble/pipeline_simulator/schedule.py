@@ -148,10 +148,11 @@ class PipelineSimulator(object):
                 graph_complete_ts[get_id(batch, i, batch.batch_idx)] = end_time
         return graph_complete_ts.tolist()
 
-    def plot(self) -> None:
+    def plot(self, ax=None) -> None:
         from pipeline_simulator.batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTORS
-        plt.figure(figsize=(10, 3))
-        ax = plt.subplot(111)
+        if ax is None:
+            plt.figure(figsize=(8.5, 2.5))
+            ax = plt.subplot(111)
         maxt = 0
         for i in range(self.num_stages):
             for j in range(len(self.history_queues[i])):
@@ -166,7 +167,19 @@ class PipelineSimulator(object):
         ax.set_title(f"S={self.num_stages}, B={self.num_batches}, Total Time = {maxt}, Bubble Rate = {(1 - usage) * 100:.2f}%")
         ax.set_xlim(0, maxt)
         ax.set_ylim(0, self.num_stages)
-        ax.set_yticks(np.arange(self.num_stages) + 0.5, [f"Stage {i}" for i in range(self.num_stages - 1, -1, -1)])
+        ax.set_yticks(np.arange(self.num_stages) + 0.5, [f"{i}" for i in range(self.num_stages - 1, -1, -1)])
+
+    def get_bubble_rate(self):
+        from pipeline_simulator.batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTORS
+        maxt = 0
+        for i in range(self.num_stages):
+            for j in range(len(self.history_queues[i])):
+                batch = self.history_queues[i][j]
+                maxt = max(maxt, batch.execution_begin + batch.execution_time)
+        normal_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches for i in range(self.num_stages) if i not in self.slow_stages])
+        slow_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches * SLOW_FACTORS[i] for i in range(self.num_stages) if i in self.slow_stages])
+        usage = (normal_stage_total + slow_stage_total) / (maxt * self.num_stages)
+        return (1 - usage) * 100
 
     def get_iter_time(self) -> float:
         maxt = 0
