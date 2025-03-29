@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from typing import List
+from math import ceil
 from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch
 
 
@@ -88,6 +89,58 @@ class OurPolicy(PipelinePolicy):
                         minidx = i
             
         return minidx
+
+
+def get_init_warmup_fwds(num_stages, max_act_count):
+    d_avg = (max_act_count - 1) // (num_stages - 1)
+    r = (max_act_count - 1) % (num_stages - 1)
+    warmup_fwds = [0] * num_stages
+    warmup_fwds[0] = max_act_count
+    for i in range(1, num_stages):
+        d_i = d_avg + 1 if i <= r else d_avg
+        warmup_fwds[i] = warmup_fwds[i - 1] - d_i
+    return warmup_fwds
+
+
+def get_adapted_warmup_fwds(num_stages, t_fwds, comm_delays):
+    warmup_fwds = [0] * num_stages
+    for i in range(num_stages - 1, -1, -1):
+        if i == num_stages - 1:
+            warmup_fwds[i] = 1
+        else:
+            warmup_fwds[i] = warmup_fwds[i + 1] + ceil(comm_delays[(i, i + 1)] / t_fwds[i]) + 2
+    return warmup_fwds
+
+
+class DeltaiPolicy(PipelinePolicy):
+    def __init__(self, num_stages: int, init_fwds: List[int]) -> None:
+        super().__init__()
+        self.num_stages = num_stages
+        self.init_fwds = init_fwds
+        self.scheduled_init_fs = [0] * self.num_stages
+        self.flags = [0] * num_stages
+
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0, stage: int = 0) -> int:
+        if self.scheduled_init_fs[stage] < self.init_fwds[stage]:
+            for i in range(len(task_queue)):
+                if isinstance(task_queue[i], ForwardBatch):
+                    if time < task_queue[i].min_begin_time:
+                        return None
+                    self.scheduled_init_fs[stage] += 1
+                    return i
+            return None
+        priority_map = {ForwardBatch: 2, BackwardWeightBatch: 1, BackwardInputBatch: 3}
+        minval, minidx = (float("inf"), float("inf")), -1
+        for i, batch in enumerate(task_queue):
+            cur = (0 if batch.min_begin_time <= time else 1, -priority_map[type(batch)], batch.batch_idx)
+            if cur < minval:
+                minval = cur
+                minidx = i
+        if self.flags[stage] == 0 and isinstance(task_queue[minidx], ForwardBatch):
+            return None
+        self.flags[stage] = 1
+        return minidx
+
 
 # ZeroBubble (ICLR'24)
 class ZeroBubblePolicy(PipelinePolicy):

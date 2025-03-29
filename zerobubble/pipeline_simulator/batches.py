@@ -20,6 +20,9 @@ def update_times(f: List[int], bi: List[int], bw: List[int], slow_factors: List[
     if slow_factors is not None:
         SLOW_FACTORS = slow_factors
 
+def get_times():
+    return FORWARD_TIMES, BACKWARD_TIMES, BACKWARD_TIMES, BACKWARD_WTIMES
+
 
 class Batch(ABC):
     def __init__(self, batch_idx: int, execution_time: float, fail_slow: bool = False, min_begin_time: int = -1, stage: int = 0) -> None:
@@ -34,7 +37,7 @@ class Batch(ABC):
         x, y = self.execution_begin, stage
         rect = patches.Rectangle((x, y), self.execution_time, height, linewidth=1, edgecolor='black', facecolor=self.color)
         ax.add_patch(rect)
-        ax.text(x + self.execution_time / 4 if len(repr(self)) == 1 else x, y + height / 2, repr(self), fontdict={"fontsize": 14 if len(repr(self)) == 1 else 11}) #weight='bold' if len(repr(self)) == 2 else 'normal')
+        # ax.text(x + self.execution_time / 4 if len(repr(self)) == 1 else x, y + height / 2, repr(self), fontdict={"fontsize": 14 if len(repr(self)) == 1 else 11}) #weight='bold' if len(repr(self)) == 2 else 'normal')
 
 
 class BubbleBatch(Batch):
@@ -53,7 +56,7 @@ class ForwardBatch(Batch):
         self.type = 'F'
 
     def __repr__(self):
-        return f"{self.batch_idx + 1}"
+        return f"F{self.batch_idx + 1}"
 
 
 class BackwardWeightBatch(Batch):
@@ -63,7 +66,7 @@ class BackwardWeightBatch(Batch):
         self.type = 'W'
 
     def __repr__(self):
-        return f"{self.batch_idx + 1}"
+        return f"W{self.batch_idx + 1}"
 
 
 class BackwardInputBatch(Batch):
@@ -73,7 +76,7 @@ class BackwardInputBatch(Batch):
         self.type = 'B'
 
     def __repr__(self):
-        return f"{self.batch_idx + 1}"
+        return f"B{self.batch_idx + 1}"
 
 
 class BackwardBatch(Batch):
