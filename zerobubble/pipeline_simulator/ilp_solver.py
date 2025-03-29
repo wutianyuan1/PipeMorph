@@ -28,10 +28,6 @@ class GraphConfig:
     print_scaling: int = 1
 
     def __post_init__(self):
-        assert all([type(cost_f) is int for cost_f in self.cost_f])
-        assert all([type(cost_b) is int for cost_b in self.cost_b])
-        assert all([type(cost_w) is int for cost_w in self.cost_w])
-        assert type(self.cost_comm) is int
         assert all([f + b + w == 0 for (f,b,w) in zip(self.mem_f, self.mem_b, self.mem_w)])
 
 @dataclass(eq=True, frozen=True)
@@ -523,7 +519,7 @@ def get_exact_solution(goal, s, n, t_fs, t_bs, t_ws, c, plot_args=None):
         if 'output' in plot_args:
             plt.savefig(plot_args['output'])
     # Returns: (1) iteration time; (2) the optimized goal time (i.e., may be max_stage_time)
-    return int(max(end_times)), int(pulp.value(prob.objective))
+    return float(max(end_times)), float(pulp.value(prob.objective))
 
 
 def plot_ilp(graph, F, num_stages, num_batches, t_fs, t_bs, t_ws, ax=None) -> None:
