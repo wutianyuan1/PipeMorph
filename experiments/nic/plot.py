@@ -16,6 +16,7 @@ LINESTYLES = ['solid', 'solid']
 
 plt.figure(figsize=(7, 2.5))
 method_times= []
+throughputs = []
 for method in METHODS:
     x = np.arange(NUM_ITERS)
     dir = os.path.join(PATH, MODEL, method)
@@ -41,6 +42,7 @@ for method in METHODS:
                 ymax = max(throughput_per_iter[i], throughput_per_iter[i + 1])
                 plt.vlines(t[i], ymin, ymax, color, ls)
             plt.hlines(BATCH_SIZE * NUM_ITERS / np.sum(iter_times), 0, t[-1], color=color, linestyle='--')
+            throughputs.append(BATCH_SIZE * NUM_ITERS / np.sum(iter_times))
     except:
         continue
 
@@ -50,6 +52,8 @@ plt.xlabel('Wallclock Time (s)', fontsize=14)
 plt.ylabel('Throughput (/s)', fontsize=14)
 plt.grid(linestyle='-.')
 legend = plt.legend(loc='lower right', fontsize=12)
-plt.savefig(f'{PATH}/NIC.pdf', bbox_inches='tight', bbox_extra_artists=(legend,))
-plt.savefig(f'{PATH}/NIC.png', bbox_inches='tight', bbox_extra_artists=(legend,))
+# plt.savefig(f'{PATH}/NIC.pdf', bbox_inches='tight', bbox_extra_artists=(legend,))
+# plt.savefig(f'{PATH}/NIC.png', bbox_inches='tight', bbox_extra_artists=(legend,))
 plt.close()
+for i, method in enumerate(METHODS):
+    print(f'1 - {method} / PipeMorph = {1 - throughputs[i] / throughputs[1]:.3f}')

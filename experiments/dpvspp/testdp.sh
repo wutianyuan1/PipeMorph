@@ -1,6 +1,6 @@
 #!/bin/bash
 
-delay_values=("10" "20" "30")  # ms!!!
+delay_values=("0" "0.125" "0.25" "0.375")  # ms!!!
 
 
 # 1DP, 1TP, 4PP
@@ -16,7 +16,7 @@ if [ "$MODEL" == "7B" ]; then
     export ATTENTION_HEADS=32
     export ZERO_BUBBLE_MEM_LIMIT=$((2 * $PIPELINE_SIZE))
 
-    export TRAIN_SAMPLES=$(( $DP_SIZE * 180 ))
+    export TRAIN_SAMPLES=$(( $DP_SIZE * 60 ))
     
     # slowlink_values=("0_1" "2_3")
 fi
@@ -78,7 +78,7 @@ fi
 for delay in "${delay_values[@]}"; do
     echo "Delay=${delay}"
     export LD_LIBRARY_PATH=/home/twubt/workspace/ncclplugin/nccl/ext-net/example:$LD_LIBRARY_PATH
-    export SLOW_RANK=1
+    export SLOW_RANK=0
     export SLEEP_TIME=${delay}
     export NCCL_NET_PLUGIN=delay
     export NUM_DELEGATES=3
