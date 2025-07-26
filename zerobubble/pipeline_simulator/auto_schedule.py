@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import List, Set
 from pipeline_simulator import batches
 from pipeline_simulator.schedule import PipelineSimulator, calc_delta_x
-from pipeline_simulator.policy import GpipePolicy, PipeDreamPolicy, OurPolicy, FixedPolicy
+from pipeline_simulator.policy import *
 
 
 @dataclass
@@ -242,14 +242,13 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List
     graph = Graph.build_graph(nstages, nmb, config)
     batches.update_times(config.cost_f, config.cost_b, config.cost_w)
 
-    best_sim_delay = search_best_simdelay(nstages, nmb, config, delay_links, delay_time, 5)
-    policy = PipeDreamPolicy(nstages)
     comm_delay = {(i, i + 1): config.cost_comm for i in range(nstages - 1)}
     slow_stages = []
     for link in delay_links:
         comm_delay[link] = delay_time
-    delay = {k: best_sim_delay for k in comm_delay.keys() if comm_delay[k] != 0}
-    delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, delay, True)
+    init_fwds = get_adapted_warmup_fwds(nstages, config.cost_f, comm_delay)
+    policy = DeltaiPolicy(nstages, init_fwds)
+    delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, comm_delay, True)
     delay_simulator.simulate()
     schedule = delay_simulator.export()
     simu_4_plot = PipelineSimulator(nstages, nmb, FixedPolicy(nstages, None, schedule), slow_stages, comm_delay, True)
