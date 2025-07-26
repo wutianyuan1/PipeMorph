@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import List, Tuple, Dict
 from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch, BubbleBatch
 from pipeline_simulator.batches import update_times
-from pipeline_simulator.policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, LearnedPolicy, OurPolicy, FixedPolicy, ZeroBubblePolicy
+from pipeline_simulator.policy import PipelinePolicy, GpipePolicy, PipeDreamPolicy, OurPolicy, FixedPolicy, ZeroBubblePolicy
 
 
 @dataclass(eq=True, frozen=True)
@@ -21,7 +21,7 @@ class ScheduledNode:
 class PipelineSimulator(object):
     def __init__(self, num_stages: int, num_batches: int, policy: PipelinePolicy,
                  slow_stages: List[int], comm_delay: Dict[Tuple[int, int], int],
-                 split_backward: bool = False) -> None:
+                 split_backward: bool = False, dt: int = 1) -> None:
         '''comm_delay: (i, j) -> T. delays T seconds between stage i and j'''
         self.num_stages = num_stages
         self.num_batches = num_batches
@@ -32,6 +32,7 @@ class PipelineSimulator(object):
         self.history_queues = [[] for _ in range(self.num_stages)]
         self.next_avail_times = np.zeros(self.num_stages, dtype=np.float32)
         self.policy = policy
+        self.dt = dt
         for i in range(self.num_batches):
             fail_slow = True if (0 in self.slow_stages) else False
             self.task_queues[0].append(ForwardBatch(i, fail_slow, -1, 0))
@@ -107,7 +108,7 @@ class PipelineSimulator(object):
                 # print(f">>t={time}, stage={i}, start executing {batch}!")
             if num_empty_queues == self.num_stages:
                 break
-            time += 1
+            time += self.dt
         return time
 
     def gen_schedule_no_comm_agg(self) -> List[List[str]]:
@@ -148,10 +149,11 @@ class PipelineSimulator(object):
                 graph_complete_ts[get_id(batch, i, batch.batch_idx)] = end_time
         return graph_complete_ts.tolist()
 
-    def plot(self) -> None:
+    def plot(self, ax=None) -> None:
         from pipeline_simulator.batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTORS
-        plt.figure(figsize=(10, 3))
-        ax = plt.subplot(111)
+        if ax is None:
+            plt.figure(figsize=(8.5, 2.5))
+            ax = plt.subplot(111)
         maxt = 0
         for i in range(self.num_stages):
             for j in range(len(self.history_queues[i])):
@@ -166,7 +168,19 @@ class PipelineSimulator(object):
         ax.set_title(f"S={self.num_stages}, B={self.num_batches}, Total Time = {maxt}, Bubble Rate = {(1 - usage) * 100:.2f}%")
         ax.set_xlim(0, maxt)
         ax.set_ylim(0, self.num_stages)
-        ax.set_yticks(np.arange(self.num_stages) + 0.5, [f"Stage {i}" for i in range(self.num_stages - 1, -1, -1)])
+        ax.set_yticks(np.arange(self.num_stages) + 0.5, [f"{i}" for i in range(self.num_stages - 1, -1, -1)])
+
+    def get_bubble_rate(self):
+        from pipeline_simulator.batches import FORWARD_TIMES, BACKWARD_TIMES, SLOW_FACTORS
+        maxt = 0
+        for i in range(self.num_stages):
+            for j in range(len(self.history_queues[i])):
+                batch = self.history_queues[i][j]
+                maxt = max(maxt, batch.execution_begin + batch.execution_time)
+        normal_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches for i in range(self.num_stages) if i not in self.slow_stages])
+        slow_stage_total = sum([(BACKWARD_TIMES[i] + FORWARD_TIMES[i]) * self.num_batches * SLOW_FACTORS[i] for i in range(self.num_stages) if i in self.slow_stages])
+        usage = (normal_stage_total + slow_stage_total) / (maxt * self.num_stages)
+        return (1 - usage) * 100
 
     def get_iter_time(self) -> float:
         maxt = 0
@@ -174,6 +188,12 @@ class PipelineSimulator(object):
             for j in range(len(self.history_queues[i])):
                 batch = self.history_queues[i][j]
                 maxt = max(maxt, batch.execution_begin + batch.execution_time)
+        return maxt
+
+    def get_max_stage_time(self) -> float:
+        maxt = 0
+        for i in range(self.num_stages):
+            maxt = max(maxt, self.history_queues[i][-1].execution_begin + self.history_queues[i][-1].execution_time - self.history_queues[i][0].execution_begin)
         return maxt
 
     def to_text(self, fn: str = None):

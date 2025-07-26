@@ -1,8 +1,6 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from typing import List
+from math import ceil
 from pipeline_simulator.batches import Batch, ForwardBatch, BackwardBatch, BackwardInputBatch, BackwardWeightBatch
 
 
@@ -56,7 +54,7 @@ class PipeDreamPolicy(PipelinePolicy):
                 minval = cur
                 minidx = i
         # If in-memory activations >= num_stages, then we cannot execute subsequent forwards
-        if gpu_mem >= self.num_stages and isinstance(task_queue[minidx], ForwardBatch):
+        if gpu_mem >= 2 * self.num_stages and isinstance(task_queue[minidx], ForwardBatch):
             return None
         return minidx
 
@@ -88,6 +86,58 @@ class OurPolicy(PipelinePolicy):
                         minidx = i
             
         return minidx
+
+
+def get_init_warmup_fwds(num_stages, max_act_count):
+    d_avg = (max_act_count - 1) // (num_stages - 1)
+    r = (max_act_count - 1) % (num_stages - 1)
+    warmup_fwds = [0] * num_stages
+    warmup_fwds[0] = max_act_count
+    for i in range(1, num_stages):
+        d_i = d_avg + 1 if i <= r else d_avg
+        warmup_fwds[i] = warmup_fwds[i - 1] - d_i
+    return warmup_fwds
+
+
+def get_adapted_warmup_fwds(num_stages, t_fwds, comm_delays):
+    warmup_fwds = [0] * num_stages
+    for i in range(num_stages - 1, -1, -1):
+        if i == num_stages - 1:
+            warmup_fwds[i] = 1
+        else:
+            warmup_fwds[i] = warmup_fwds[i + 1] + ceil(comm_delays[(i, i + 1)] / t_fwds[i]) + 2
+    return warmup_fwds
+
+
+class DeltaiPolicy(PipelinePolicy):
+    def __init__(self, num_stages: int, init_fwds: List[int]) -> None:
+        super().__init__()
+        self.num_stages = num_stages
+        self.init_fwds = init_fwds
+        self.scheduled_init_fs = [0] * self.num_stages
+        self.flags = [0] * num_stages
+
+    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0, stage: int = 0) -> int:
+        if self.scheduled_init_fs[stage] < self.init_fwds[stage]:
+            for i in range(len(task_queue)):
+                if isinstance(task_queue[i], ForwardBatch):
+                    if time < task_queue[i].min_begin_time:
+                        return None
+                    self.scheduled_init_fs[stage] += 1
+                    return i
+            return None
+        priority_map = {ForwardBatch: 2, BackwardWeightBatch: 1, BackwardInputBatch: 3}
+        minval, minidx = (float("inf"), float("inf")), -1
+        for i, batch in enumerate(task_queue):
+            cur = (0 if batch.min_begin_time <= time else 1, -priority_map[type(batch)], batch.batch_idx)
+            if cur < minval:
+                minval = cur
+                minidx = i
+        if self.flags[stage] == 0 and isinstance(task_queue[minidx], ForwardBatch):
+            return None
+        self.flags[stage] = 1
+        return minidx
+
 
 # ZeroBubble (ICLR'24)
 class ZeroBubblePolicy(PipelinePolicy):
@@ -128,55 +178,3 @@ class FixedPolicy(PipelinePolicy):
                 self.count[stage] += 1
                 return idx
         return None
-
-
-class MockAgentNet(nn.Module):
-    def __init__(self, B: int = 10, embedding_dim: int = 4) -> None:
-        super(MockAgentNet, self).__init__()
-        self.embedding = nn.Embedding(3, embedding_dim, padding_idx=2)  # "F"=0, "B"=1, "PAD"=2
-        self.fc1 = nn.Linear(4 * B * embedding_dim, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 2)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.embedding(x)
-        x = x.view(x.size(0), -1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return F.softmax(x, dim=1)
-
-
-def encode_queue(queue: List, max_length: int) -> List[int]:
-    mapping = {ForwardBatch: 0, BackwardBatch: 1}
-    encoded = [mapping.get(type(x), 2) for x in queue]  # Use 2 for padding
-    encoded += [2] * (max_length - len(encoded))
-    return encoded
-
-
-def prepare_input(task_queue: List, finish_queue: List, max_length: int) -> torch.Tensor:
-    task_encoded = encode_queue(task_queue, max_length)
-    finish_encoded = encode_queue(finish_queue, max_length)
-    return torch.tensor(task_encoded + finish_encoded, dtype=torch.long)
-
-
-class LearnedPolicy(nn.Module, PipelinePolicy):
-    def __init__(self, num_stages: int, num_batches: int) -> None:
-        super(LearnedPolicy, self).__init__()
-        self.num_stages = num_stages
-        self.num_batches = num_batches
-        self.net = MockAgentNet(self.num_batches)
-
-    def pick_batch_to_run(self, task_queue: List[Batch], finish_queue: List[Batch] = None, time: int = 0) -> int:
-        assert finish_queue is not None, "1F1B requires a non-null finish queue"
-        # probs = self.net(prepare_input(task_queue, finish_queue, 2 * self.num_batches).unsqueeze(0)).squeeze()
-        probs = torch.rand(3)
-        priority_map = {ForwardBatch: probs[0], BackwardBatch: probs[1], BackwardInputBatch: probs[2], BackwardWeightBatch: probs[2] - 0.1}
-        print(probs)
-        minval, minidx = (float("inf"), float("inf")), -1
-        for i, batch in enumerate(task_queue):
-            cur = (-priority_map[type(batch)], batch.batch_idx)
-            if cur < minval:
-                minval = cur
-                minidx = i
-        return minidx
