@@ -243,7 +243,7 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List
     batches.update_times(config.cost_f, config.cost_b, config.cost_w)
 
     best_sim_delay = search_best_simdelay(nstages, nmb, config, delay_links, delay_time, 5)
-    policy = OurPolicy(nstages)
+    policy = PipeDreamPolicy(nstages)
     comm_delay = {(i, i + 1): config.cost_comm for i in range(nstages - 1)}
     slow_stages = []
     for link in delay_links:
