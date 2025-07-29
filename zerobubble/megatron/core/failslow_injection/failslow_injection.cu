@@ -35,10 +35,11 @@ static GlobalStatus* status;
 
 void init() {
     status = new GlobalStatus();
-    char* nccl_lib_path = getenv("NCCL_LIB_PATH");
-    if (!nccl_lib_path)
-        nccl_lib_path = (char*)"/usr/lib/x86_64-linux-gnu/libnccl.so";
-    status->nccl_lib_handle = dlopen(nccl_lib_path, RTLD_LAZY);
+    // char* nccl_lib_path = getenv("NCCL_LIB_PATH");
+    // if (!nccl_lib_path)
+    //     nccl_lib_path = (char*)"/root/miniconda3/lib/python3.12/site-packages/nvidia/nccl/lib/libnccl.so";
+    // status->nccl_lib_handle = dlopen(nccl_lib_path, RTLD_LAZY);
+    status->nccl_lib_handle = RTLD_NEXT;
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0); 
     status->g_clock_rate = prop.clockRate;
@@ -53,7 +54,7 @@ void init() {
     status->redis_client = new Client(addr, redis_port);
     int gpus_per_pp_stage = int(std::atoi(getenv("WORLD_SIZE")) / std::atoi(getenv("PIPELINE_SIZE")));
     status->pp_stage = int(std::atoi(getenv("RANK")) / gpus_per_pp_stage);
-    printf("[Injector] Init: my pp_stage = %d, gpus_per_pp_stage = %d\n", status->pp_stage, gpus_per_pp_stage);
+    // printf("[Injector] Init: my pp_stage = %d, gpus_per_pp_stage = %d\n", status->pp_stage, gpus_per_pp_stage);
 }
 
 
@@ -99,7 +100,7 @@ ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count, n
     // Init the global status and get the real NCCL function.
     if (!sys_inited) init();
     RETRIEVE_NCCL_FUNC(ncclBroadcast);
-
+    // printf("ncclBroadcast count=%d real_func=%p, wrapper=%p\n", count, real_func, (void*)ncclBroadcast);
     if (count == 19)
         status->redis_client->get_if_nic_crash();
 
