@@ -12,11 +12,11 @@ We provide **four VM instances on Alibaba Cloud** with NVIDIA A10 GPUs to reprod
     * Multi-link degradation evaluation
     * Overhead evaluation
 
-*Note 1*: Full reproduction of large-scale experiments (e.g., 140B model training) requires a cluster with hundreds of GPUs. While we cannot provide such infrastructure, reviewers with access to large-scale resources may replicate these experiments. On our provided VMs, the training scale is limited, but the key results and trends remain similar.
+*Note 1*: Full reproduction of large-scale experiments (e.g., 140B model training) requires a cluster with hundreds of GPUs. While we cannot provide such infrastructure, reviewers with access to large-scale resources may replicate these experiments. On our provided VMs, the training scale is limited (4-stage PP, no DP or TP), but the key results and trends remain similar.
 
 *Note 2*: The results shown in the paper were evaluated on NVIDIA H800 clusters, while we can only provide NVIDIA A10 GPUs. Thus, the absolute performance will not match, but the overall trends will be similar. Since computation on the A10 is significantly slower than on the H800 (e.g., a forward pass on the H800 may take 10ms, while it takes 30ms on the A10), the injected communication delays are increased in the AE scripts (e.g., from 30/60ms to 60/120ms) to maintain a similar communication-to-computation ratio.
 
-*Note 3*: As running VMs continuously is expensive, we will start them on demand. If you would like to use these VMs, please email me (twubt@connect.ust.hk) or reply to me on the HotCRP site, and I will start them upon your request.
+*Note 3*: As running VMs continuously is expensive, we will start them on demand. If you would like to use these VMs, please email me (twubt@connect.ust.hk) or reply to me on the HotCRP site, and I will start them upon your request and give you corresponding node IP and password.
 
 
 ## Environment Setup
@@ -38,7 +38,7 @@ apt-get update
 apt-get install redis-server
 pip3 install pulp matplotlib regex ninja cmake pybind11 sentencepiece
 ```
-- Then, compile the failslow-injection library using `PipeMorph/failslow_injection_compile.sh`. You may need to modify relative paths in this script.
+- Next, clone the repo and checkout to the `AE` branch, then compile the failslow-injection library using `PipeMorph/failslow_injection_compile.sh`. You may need to modify relative paths in this script.
 - Finally, clone the PipeMorph library and run the scripts. You may need to modify all IPs and paths in the scripts under the `PipeMorph/ae` folder and in `PipeMorph/zerobubble/examples/pipemorph_ae.sh`.
 
 ## Reproducing Key Results
@@ -51,5 +51,6 @@ git checkout AE
 - Reproduce evaluation results: In the `PipeMorph/ae` folder, there are subfolders named `fig*`, each corresponding to a evaluation figure in the paper. The entry script is `PipeMorph/ae/run_all.sh`. For example, to reproduce Figure 15, run:
 ```shell
 ./PipeMorph/ae/run_all.sh fig15
+python ./PipeMorph/ae/fig15/plot_fig15.py
 ```
 Once the experiment completes, you will see output like All nodes have completed their tasks. You can then check the results under `PipeMorph/ae/fig*/fig*.pdf`.

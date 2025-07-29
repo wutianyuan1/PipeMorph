@@ -54,7 +54,7 @@ for method in METHODS:
 method_times = np.array(method_times)
 plt.xticks(x, DELAYS, fontsize=14)
 plt.yticks(fontsize=14)
-plt.xlabel('Communication Delay (s) between PP stages 6$\leftrightarrow$7', fontsize=14)
+plt.xlabel('Communication Delay (s) between PP stages 2$\leftrightarrow$3', fontsize=14)
 plt.ylabel('Time Per\nIteration (s)', fontsize=14)
 plt.grid(linestyle='-.')
 legend = plt.legend(fontsize=12)
