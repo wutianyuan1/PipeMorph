@@ -50,7 +50,7 @@ git checkout AE
 
 - Reproduce evaluation results: In the `PipeMorph/ae` folder, there are subfolders named `fig*`, each corresponding to a evaluation figure in the paper. The entry script is `PipeMorph/ae/run_all.sh`. For example, to reproduce Figure 15, run:
 ```shell
-./PipeMorph/ae/run_all.sh fig15
-python ./PipeMorph/ae/fig15/plot_fig15.py
+./ae/run_all.sh fig15
+python ./ae/fig15/plot_fig15.py
 ```
 Once the experiment completes, you will see output like All nodes have completed their tasks. You can then check the results under `PipeMorph/ae/fig*/fig*.pdf`.
