@@ -55,12 +55,21 @@ public:
         }
     }
 
-    float get_sleep_time() {
+    std::vector<float> get_sleep_time() {
         int status = 0;
+        std::vector<float> ret;
         std::string reply = _get_from_redis("sleep_time", &status);
-        if (status != -1)
-            return std::stof(reply);
-        return 0;
+        if (status == -1)
+            return ret;
+        std::stringstream ss(reply);
+        std::string token;
+
+        while (std::getline(ss, token, ',')) {
+            if (!token.empty()) {
+                ret.emplace_back(std::stof(token));
+            }
+        }
+        return ret;
     }
 
     std::vector<std::tuple<int, int>> get_slow_links() {

@@ -19,6 +19,7 @@ _TRAIN_START_TIME = time.time()
 import torch
 import redis
 import os
+import threading
 
 from megatron import get_args
 from megatron import get_signal_handler
@@ -52,7 +53,7 @@ from megatron.data.data_samplers import build_pretraining_data_loader
 from megatron.utils import calc_params_l2_norm
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.weight_grad_store import WeightGradStore
-from megatron.core.failslow_injection.slow_link_injector import SlowLinkInjector
+from megatron.core.failslow_injection.slow_link_injector import SlowLinkInjector, SlowLinkInjectorWithTiming
 from megatron.core import parallel_state
 from megatron.utils import report_memory
 from megatron.model.vision.knn_monitor import compute_feature_bank
@@ -811,7 +812,11 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
     # Initially, there are no fail-slow links or ranks, just set to empty and 0.0.
     redis_client = redis.StrictRedis(host=os.environ['MASTER_ADDR'], port=int(os.environ.get('REDIS_PORT', '6379')))
     if torch.distributed.get_rank() == 0:
-        slow_injector = SlowLinkInjector('./megatron/core/failslow_injection/slowlinks.trace', redis_client)
+        trace_path = './megatron/core/failslow_injection/slowlinks.trace'
+        if os.getenv('INJECT_DYNAMIC_STRAGGLERS') is None:
+            slow_injector = SlowLinkInjector(trace_path, redis_client)
+        else:
+            slow_injector = SlowLinkInjectorWithTiming(trace_path, redis_client)
     else:
         slow_injector = None
     use_delegate_tensor = torch.tensor([0], device=torch.cuda.current_device(), dtype=torch.int32)
@@ -831,15 +836,25 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
 
         # Madoka: forward step of the slow link injector
         if slow_injector is not None:
-            slow_injector.step(iteration)
+            if os.getenv('INJECT_DYNAMIC_STRAGGLERS') is None:
+                slow_injector.step(iteration)
+            else:
+                # Skip the first 2 iterations which are used to initialize two transmission modes,
+                # and the next 5 iterations which are used to profile execution times.
+                if iteration == 7:
+                    injector_thread_stop_event = threading.Event() # Used to terminate this thread.
+                    slow_injector_thread = threading.Thread(target=slow_injector.run, args=(injector_thread_stop_event,))
+                    slow_injector_thread.start()
 
         # We use the first 2 iterations to init two transmission modes, iter=0 for delegate mode, iter>1 for normal mode
         use_delegate = True if iteration == 0 else False
         # For other iterations, if the delay is not 0, we use delegate if sleep_time is not 0.
         sleep_time_str = redis_client.get("sleep_time")
-        if sleep_time_str is not None and float(sleep_time_str) != 0.0:
-            # print("Use delegate mode!")
-            use_delegate = True
+        if sleep_time_str is not None:
+            sleep_time_str = sleep_time_str.decode()
+            if sleep_time_str != "" and any([float(t) != 0.0 for t in sleep_time_str.split(',')]):
+                # print("Use delegate mode!")
+                use_delegate = True
         use_delegate_tensor[0] = 1 if use_delegate else 0
         # Use delegate if one wants to use
         torch.distributed.all_reduce(use_delegate_tensor, op=torch.distributed.ReduceOp.MAX)
@@ -959,6 +974,11 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         if args.manual_gc:
             if args.manual_gc_interval != 0 and iteration % args.manual_gc_interval == 0:
                 gc.collect()
+
+    # Terminate injector thread.
+    if slow_injector is not None and os.getenv('INJECT_DYNAMIC_STRAGGLERS') is not None:
+        injector_thread_stop_event.set()
+        slow_injector_thread.join()
 
     # Flush TensorBoard and WandB writers.
     writer = get_tensorboard_writer()

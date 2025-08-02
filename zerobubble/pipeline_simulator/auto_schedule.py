@@ -235,7 +235,7 @@ def search_best_simdelay(nstages: int, nmb: int, config: GraphConfig, delay_link
     return best_sim_delay
 
 
-def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List, delay_time: float):
+def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List, delay_time: List[float]):
     if torch.distributed.get_rank() == 0:
         print(config.cost_f, config.cost_b, config.cost_w)
         print(f"{nstages} stages, {nmb} micro-batches")
@@ -244,8 +244,11 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List
 
     comm_delay = {(i, i + 1): config.cost_comm for i in range(nstages - 1)}
     slow_stages = []
-    for link in delay_links:
-        comm_delay[link] = delay_time
+    assert len(delay_links) == len(delay_time)
+    for link, d in zip(delay_links, delay_time):
+        comm_delay[link] = d
+    if torch.distributed.get_rank() == 0:
+        print(f"comm_delay: {comm_delay}")
     init_fwds = get_adapted_warmup_fwds(nstages, config.cost_f, comm_delay)
     policy = DeltaiPolicy(nstages, init_fwds)
     delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, comm_delay, True)

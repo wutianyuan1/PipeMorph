@@ -59,7 +59,7 @@ class CommunicationDelegate(mp.Process):
             self.recv_id = 0
 
         # Delay simulation
-        self.delay_time = 0.0
+        self.delay_time = []
         self.delay_links = []
         self.delay_time_cache = None
         self.send_count = 0
@@ -70,7 +70,7 @@ class CommunicationDelegate(mp.Process):
         # Update delay and slow links every CHECK_INTERVAL sends
         if self.send_count == 0:
             self.delay_links = []
-            self.delay_time = 0.0
+            self.delay_time = []
             delay_links_reply = self.redis_client.get("slow_links")
             if delay_links_reply is not None:
                 delay_links_str = delay_links_reply.decode()
@@ -80,16 +80,20 @@ class CommunicationDelegate(mp.Process):
                         self.delay_links.append((int(start), int(end)))
             delay_time_reply = self.redis_client.get("sleep_time")
             if delay_time_reply is not None:
-                self.delay_time = float(delay_time_reply)
+                delay_time_str = delay_time_reply.decode()
+                if delay_time_str != "":
+                    delay_time = [float(t) for t in delay_time_str.split(',')]
+                    self.delay_time = delay_time
+            assert len(self.delay_time) == len(self.delay_links)
             # print(f"[{self.name} {self.pp_stage}] Update delay: links={self.delay_links}, time={self.delay_time}")
 
             self.delay_time_cache = 0
-            for link in self.delay_links:
+            for link, delay in zip(self.delay_links, self.delay_time):
                 if ('SendForward' in self.name) and (self.pp_stage == link[0]):
-                    self.delay_time_cache = self.delay_time
+                    self.delay_time_cache = delay
                     break
                 elif ('SendBackward' in self.name) and (self.pp_stage == link[1]):
-                    self.delay_time_cache = self.delay_time
+                    self.delay_time_cache = delay
                     break
             # print(f"[{self.name} {self.pp_stage}] Delay time init to {self.delay_time_cache}")
 

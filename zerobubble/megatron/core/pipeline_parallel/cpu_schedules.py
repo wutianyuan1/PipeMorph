@@ -420,7 +420,7 @@ class OurScheduler:
 our_scheduler = OurScheduler()
 schedule = None
 redis_client = None
-delay_links, delay_time = [], 0.0
+delay_links, delay_time = [], []
 reschedule_at_next_iter = False
 
 
@@ -441,7 +441,7 @@ def update_schedule(num_stages, num_microbatches, profile_exec_times):
 
     delay_links_reply = redis_client.get("slow_links")
     new_delay_links = []
-    new_delay_time = 0.0
+    new_delay_time = []
     if delay_links_reply is not None:
         delay_links_str = delay_links_reply.decode()
         if delay_links_str != "":
@@ -450,7 +450,10 @@ def update_schedule(num_stages, num_microbatches, profile_exec_times):
                 new_delay_links.append((int(start), int(end)))
     delay_time_reply = redis_client.get("sleep_time")
     if delay_time_reply is not None:
-        new_delay_time = float(delay_time_reply)
+        new_delay_time_str = delay_time_reply.decode()
+        if new_delay_time_str != "":
+            new_delay_time = [float(t) for t in new_delay_time_str.split(',')]
+    assert len(new_delay_time) == len(new_delay_links)
     # Check if the delay info has been changed
     if new_delay_time != delay_time or new_delay_links != delay_links:
         delay_links = new_delay_links
@@ -472,7 +475,7 @@ def update_schedule(num_stages, num_microbatches, profile_exec_times):
                 cost_comm=0
             ),
             delay_links,
-            delay_time * 1000.0  # convert s to ms
+            [t * 1000.0 for t in delay_time]  # convert s to ms
         )
         # for stage in range(num_stages):
         #     print_rank_0(f'Stage {stage}')

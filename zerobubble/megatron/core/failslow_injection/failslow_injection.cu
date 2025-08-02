@@ -21,7 +21,7 @@
 
 struct GlobalStatus {
     clock_t g_clock_rate;
-    float sleep_time;
+    std::vector<float> sleep_time;
     int send_count;
     void* nccl_lib_handle;
     Client* redis_client;
@@ -45,7 +45,7 @@ void init() {
     status->g_clock_rate = prop.clockRate;
     sys_inited = true;
     status->send_count = 0;
-    status->sleep_time = 0.0;
+    status->sleep_time = std::vector<float>(0);
     std::string addr = std::string(getenv("MASTER_ADDR"));
     char* port_str = getenv("REDIS_PORT");
     if (!port_str)
@@ -74,8 +74,11 @@ ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatyp
 
     // Check the sleep time and slow links every CHECK_INTERVAL send operations.
     if (status->send_count == 0) {
-        status->sleep_time = status->redis_client->get_sleep_time();
-        status->slow_links = status->redis_client->get_slow_links();
+        auto sleep_time = status->redis_client->get_sleep_time();
+        auto slow_links = status->redis_client->get_slow_links();
+        assert(sleep_time.size() == slow_links.size());
+        status->sleep_time = sleep_time;
+        status->slow_links = slow_links;
     }
     status->send_count = (status->send_count + 1) % CHECK_INTERVAL;
 
@@ -88,8 +91,9 @@ ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatyp
     for (int i = 0; i < status->slow_links.size(); i++) {
         auto start = std::get<0>(status->slow_links[i]);
         auto end = std::get<1>(status->slow_links[i]);
+        auto sleep_time = status->sleep_time[i];
         if ((status->pp_stage == start && peer_stage == end) || (status->pp_stage == end && peer_stage == start))
-            gpu_msleep<<<1, 1, 0, stream>>>(status->sleep_time * 1000.0, status->g_clock_rate);
+            gpu_msleep<<<1, 1, 0, stream>>>(sleep_time * 1000.0, status->g_clock_rate);
     }
 
     // Call the real NCCL function to send the data.
