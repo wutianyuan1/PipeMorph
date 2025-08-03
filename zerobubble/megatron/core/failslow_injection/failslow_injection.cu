@@ -35,11 +35,11 @@ static GlobalStatus* status;
 
 void init() {
     status = new GlobalStatus();
-    // char* nccl_lib_path = getenv("NCCL_LIB_PATH");
-    // if (!nccl_lib_path)
-    //     nccl_lib_path = (char*)"/root/miniconda3/lib/python3.12/site-packages/nvidia/nccl/lib/libnccl.so";
-    // status->nccl_lib_handle = dlopen(nccl_lib_path, RTLD_LAZY);
-    status->nccl_lib_handle = RTLD_NEXT;
+    char* nccl_lib_path = getenv("NCCL_LIB_PATH");
+    if (!nccl_lib_path)
+        nccl_lib_path = (char*)"/usr/lib/x86_64-linux-gnu/libnccl.so";
+    status->nccl_lib_handle = dlopen(nccl_lib_path, RTLD_LAZY);
+    // status->nccl_lib_handle = RTLD_NEXT;
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0); 
     status->g_clock_rate = prop.clockRate;

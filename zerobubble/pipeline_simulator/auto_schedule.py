@@ -246,11 +246,10 @@ def auto_schedule(nstages: int, nmb: int, config: GraphConfig, delay_links: List
     slow_stages = []
     assert len(delay_links) == len(delay_time)
     for link, d in zip(delay_links, delay_time):
-        comm_delay[link] = d
+        comm_delay[link] = int(d)
     if torch.distributed.get_rank() == 0:
         print(f"comm_delay: {comm_delay}")
-    init_fwds = get_adapted_warmup_fwds(nstages, config.cost_f, comm_delay)
-    policy = DeltaiPolicy(nstages, init_fwds)
+    policy = OurPolicy(nstages)
     delay_simulator = PipelineSimulator(nstages, nmb, policy, slow_stages, comm_delay, True)
     delay_simulator.simulate()
     schedule = delay_simulator.export()

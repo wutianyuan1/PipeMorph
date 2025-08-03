@@ -9,7 +9,7 @@ from ae.parse_time import parse_iter_times
 pattern = r"[-+]?\d*\.\d+|\d+"
 
 PATH = 'ext_exp/dynamic_stragglers'
-MODELS = ['7B']
+MIN_DURATIONS = ['50', '100', '200']
 METHODS = ['1F1B', 'ZB', 'ZB-CPU', 'ZB-CPU-ReSchedule']
 HATCHES = ['//', '--', '\\\\', '||']
 COUNT_LAST_ITERS = 5
@@ -22,13 +22,13 @@ opt_ratio = {method: None for method in METHODS}
 t = {method: None for method in METHODS}
 
 plt.figure(figsize=(14, 3.6))
-x = np.arange(len(MODELS))
+x = np.arange(len(MIN_DURATIONS))
 method_times = []
 for method in METHODS:
     times = []
     std_times = []
-    for i, model in enumerate(MODELS):
-        dir = os.path.join(PATH, method)
+    for i, min_duration in enumerate(MIN_DURATIONS):
+        dir = os.path.join(PATH, min_duration, method)
         try:
             assert os.path.exists(f"{dir}/real.png")
         except:
@@ -62,9 +62,10 @@ for i, method in enumerate(METHODS):
     print(f"1 - PipeMorph / {method} = {r}")
     opt_ratio[method] = r
     t[method] = method_times[i]
-x = np.arange(len(MODELS)) + (len(METHODS) - 1) / 2 * WIDTH
-plt.xticks(x, MODELS, fontsize=14)
+x = np.arange(len(MIN_DURATIONS)) + (len(METHODS) - 1) / 2 * WIDTH
+plt.xticks(x, [f'{t} ms' for t in MIN_DURATIONS], fontsize=14)
 plt.yticks(fontsize=14)
+plt.xlabel('Minimum Duration (ms) of A Delay Setting', fontsize=14)
 plt.ylabel('Time Per\nIteration (s)', fontsize=12)
 plt.grid(linestyle='-.')
 plt.tight_layout(pad=1.05)
@@ -74,9 +75,9 @@ plt.savefig(f'{PATH}/dynamic_stragglers.png', bbox_inches='tight', bbox_extra_ar
 plt.close()
 for method in opt_ratio:
     print(method)
-    for i, model in enumerate(MODELS):
+    for i, min_duration in enumerate(MIN_DURATIONS):
         vals = [opt_ratio[method][i]]
-        print(model, vals)
+        print(min_duration, vals)
         print(f'avg {sum(vals) / len(vals):.3f}')
         print(f'max {max(vals):.3f}')
         print()

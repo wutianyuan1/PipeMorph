@@ -10,7 +10,7 @@ import memcpy
 from multiprocessing.shared_memory import SharedMemory
 from megatron.core import parallel_state
 
-CHECK_INTERVAL = 8
+CHECK_INTERVAL = 1
 FLOAT16_NBYTES = 2
 UNREADY_SIGNAL = 0
 SEND_SIGNAL = 1
