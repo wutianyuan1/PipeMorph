@@ -10,3 +10,4 @@ build/
 *.tar.gz.1
 backup/
 zerobubble/zb_sample_dataset/
+bkup*

@@ -1,4 +1,13 @@
 import numpy as np
+import re
+
+
+def parse_iter_times_log(path: str, method: str, count_iters_range: tuple):
+    with open(f"{path}/log.txt", 'r') as f:
+        content = f.read()
+    all_iter_times = [float(i) for i in re.findall(r'per iteration \(ms\): (\d+\.\d+)', content)]
+    return np.array(all_iter_times[count_iters_range[0]:count_iters_range[1]])
+
 
 def parse_iter_times(path: str, method: str, count_iters_range: tuple):
     suffix_map = {'1F1B': '_1F1B', 'ZB': '', 'ZB-CPU': '_CPU', 'ZB-CPU-ReSchedule': '_CPU', 'ALL-CPU': '_CPU'}

@@ -11,11 +11,12 @@ np.random.seed(2025)
 parser = argparse.ArgumentParser()
 parser.add_argument("--num_stages", type=int, default=4)
 parser.add_argument("--min_duration", type=int, default=100)
+parser.add_argument("--max_duration", type=int, default=300)
 args = parser.parse_args()
 
 LINKS = [f'{i}_{i + 1}' for i in range(args.num_stages - 1)]
 # Distribution parameters
-MIN_DURATION, MAX_DURATION = args.min_duration, 300 # Duration ~ U(MIN_DURATION, MAX_DURATION)
+MIN_DURATION, MAX_DURATION = args.min_duration, args.max_duration # Duration ~ U(MIN_DURATION, MAX_DURATION)
 DELAY_MEAN, DELAY_STD = 30, 10 # Delay ~ N(DELAY_MEAN, DELAY_STD)
 # We start from the 8-th iteration, the training lasts for 15 iterations,
 # and we assume the maximum iteration time across 4 methods is 1500 ms.
@@ -57,9 +58,9 @@ for i in range(args.num_stages - 1):
 # plt.xlabel('Wallclock Time (s)')
 # plt.ylabel('Delay (ms)')
 USER_NAME = os.getenv("SLURM_JOB_USER")
-plt.savefig(F"/home/{USER_NAME}/workspace/PipeMorph-Ext-Exp/ext_exp/dynamic_stragglers/trace_{MIN_DURATION}.png")
+plt.savefig(F"/home/{USER_NAME}/workspace/PipeMorph-Ext-Exp/ext_exp/dynamic_stragglers/trace_{MIN_DURATION}-{MAX_DURATION}.png")
 trace_lines = [f"{timing / 1000};{','.join(link2delay.keys())};{','.join([str(t / 1000) for t in link2delay.values()])}\n" for timing, link2delay in trace]
-with open(f"/home/{USER_NAME}/workspace/PipeMorph-Ext-Exp/ext_exp/dynamic_stragglers/{MIN_DURATION}.trace", 'w') as f:
+with open(f"/home/{USER_NAME}/workspace/PipeMorph-Ext-Exp/ext_exp/dynamic_stragglers/{MIN_DURATION}-{MAX_DURATION}.trace", 'w') as f:
     f.writelines(trace_lines)
 with open(f"/home/{USER_NAME}/workspace/PipeMorph-Ext-Exp/zerobubble/megatron/core/failslow_injection/slowlinks.trace", 'w') as f:
     f.writelines(trace_lines)

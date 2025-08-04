@@ -22,7 +22,7 @@ for min_duration in "${min_duration_values[@]}"; do
         export METHOD=$method
         export NUM_DELEGATES=6
         export INJECT_DYNAMIC_STRAGGLERS=1
-        python $REPO_PATH/ext_exp/dynamic_stragglers/set_trace.py --min_duration $min_duration
+        python $REPO_PATH/ext_exp/dynamic_stragglers/set_trace.py --min_duration $min_duration --max_duration $(($min_duration*2))
         export OUT_DIR="$REPO_PATH/ext_exp/dynamic_stragglers/$min_duration/$METHOD"
         mkdir -p "$OUT_DIR"
         # Before running the training job, clear potential shms

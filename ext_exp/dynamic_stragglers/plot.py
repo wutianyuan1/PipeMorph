@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from ae.parse_time import parse_iter_times
+from ae.parse_time import parse_iter_times_log as parse_iter_times
 
 pattern = r"[-+]?\d*\.\d+|\d+"
 
@@ -18,10 +18,40 @@ WIDTH = 0.23
 COLORS = ['#9673A6', '#E7AB10', '#6C8EBF', '#B85450']
 COLORS2 = ['#462356', '#975B00', '#1C3E6F', '#780400']
 
+def parse_trace(path, min_time, max_time):
+    with open(f"{path}/{min_time}-{max_time}.trace", 'r') as f:
+        content = f.read().split("\n")
+    ts, lats = [], []
+    for line in content:
+        if len(line) == 0:
+            continue
+        items = line.split(';')
+        ts.append(float(items[0]))
+        lats.append([float(items[-1].split(',')[i]) for i in range(3)])
+    return np.array(ts), np.array(lats).T
+
+
 opt_ratio = {method: None for method in METHODS}
 t = {method: None for method in METHODS}
 
-plt.figure(figsize=(14, 3.6))
+plt.figure(figsize=(9, 3.5))
+
+plt.subplot(211)
+lss = ['dashdot', 'dashed', 'solid']
+min_times, max_times = [50, 100, 200], [100, 200, 400]
+labels = ['A', 'B', 'C']
+for i in range(3):
+    ts, lats = parse_trace(PATH, min_times[i], max_times[i])
+    plt.plot(ts, lats[0]*1000, label=f"{labels[i]}: Unif({min_times[i]}, {max_times[i]})ms", linestyle=lss[i], c=COLORS[i])
+plt.legend(ncols=3, fontsize=12, frameon=False, loc=(0, 0.8))
+plt.ylim(5, 60)
+plt.grid(linestyle='-.')
+plt.xlabel('Wallclock Time (s)', fontsize=14)
+plt.ylabel('Comm.\n Delay (ms)', fontsize=12)
+plt.xticks(fontsize=14)
+plt.yticks(fontsize=14)
+
+plt.subplot(212)
 x = np.arange(len(MIN_DURATIONS))
 method_times = []
 for method in METHODS:
@@ -63,13 +93,15 @@ for i, method in enumerate(METHODS):
     opt_ratio[method] = r
     t[method] = method_times[i]
 x = np.arange(len(MIN_DURATIONS)) + (len(METHODS) - 1) / 2 * WIDTH
-plt.xticks(x, [f'{t} ms' for t in MIN_DURATIONS], fontsize=14)
+plt.xticks(x, ['A', 'B', 'C'], fontsize=14)
 plt.yticks(fontsize=14)
-plt.xlabel('Minimum Duration (ms) of A Delay Setting', fontsize=14)
+# plt.xlabel('Minimum Duration (ms) of A Delay Setting', fontsize=14)
 plt.ylabel('Time Per\nIteration (s)', fontsize=12)
+plt.ylim(0, 2.2)
 plt.grid(linestyle='-.')
-plt.tight_layout(pad=1.05)
-legend = plt.figlegend(loc=(0.27, 0.9), ncols=4, fontsize=14, frameon=False)
+legend = plt.legend(ncols=4, fontsize=14, frameon=False, loc=(0, 0.7))
+plt.tight_layout(pad=0.01)
+# legend = plt.figlegend(loc=(0.02, 0.9), ncols=4, fontsize=14, frameon=False)
 plt.savefig(f'{PATH}/dynamic_stragglers.pdf', bbox_inches='tight', bbox_extra_artists=(legend,))
 plt.savefig(f'{PATH}/dynamic_stragglers.png', bbox_inches='tight', bbox_extra_artists=(legend,))
 plt.close()
